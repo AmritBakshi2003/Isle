@@ -43,6 +43,14 @@
     click_action: 'expand',
     blur_on_battery: 'false',
     bg_blur: 'auto',
+    media_album_art: 'true',
+    media_progress_ring: 'true',
+    progress_file_copy: 'true',
+    progress_download: 'true',
+    progress_app_install: 'true',
+    progress_battery_stretch: 'true',
+    progress_ring_style: 'arc',
+    progress_auto_dismiss: '3',
   });
   
   const tabs = $derived(allTabs.filter(t => {
@@ -54,13 +62,14 @@
 
   let clock = $state(fmtClock());
   let closeTimer;
+  let autoDismissTimer;
   let settingsLoaded = $state(false);
 
   // ── apply appearance + behavior settings ───────────────────────────────
   const DEFAULT_SETTINGS = {
     corner_radius: '22',
     opacity: '95',
-    bg_color: '#1a1a1a',
+    bg_color: 'rgba(26, 26, 26, 0)',
     bg_blur: 'auto',
     border_on: 'false',
     border_color: '#6c6c6c',
@@ -73,6 +82,14 @@
     module_tasks: 'true',
     module_calendar: 'true',
     blur_on_battery: 'false',
+    media_album_art: 'true',
+    media_progress_ring: 'true',
+    progress_file_copy: 'true',
+    progress_download: 'true',
+    progress_app_install: 'true',
+    progress_battery_stretch: 'true',
+    progress_ring_style: 'arc',
+    progress_auto_dismiss: '3',
   };
 
   function applySettings(s) {
@@ -89,6 +106,14 @@
       click_action: settings.click_action ?? 'expand',
       blur_on_battery: settings.blur_on_battery ?? 'false',
       bg_blur: settings.bg_blur ?? 'auto',
+      media_album_art: settings.media_album_art ?? 'true',
+      media_progress_ring: settings.media_progress_ring ?? 'true',
+      progress_file_copy: settings.progress_file_copy ?? 'true',
+      progress_download: settings.progress_download ?? 'true',
+      progress_app_install: settings.progress_app_install ?? 'true',
+      progress_battery_stretch: settings.progress_battery_stretch ?? 'true',
+      progress_ring_style: settings.progress_ring_style ?? 'arc',
+      progress_auto_dismiss: settings.progress_auto_dismiss ?? '3',
     });
     
     const root = document.documentElement;
@@ -137,6 +162,17 @@
     }
   });
 
+  // Auto-dismiss progress when it reaches 100%
+  $effect(() => {
+    if (progress.value >= 100 && Number(moduleSettings.progress_auto_dismiss) > 0) {
+      clearTimeout(autoDismissTimer);
+      autoDismissTimer = setTimeout(() => {
+        clearProgress();
+      }, Number(moduleSettings.progress_auto_dismiss) * 1000);
+    }
+    return () => clearTimeout(autoDismissTimer);
+  });
+
   // ── progress ring geometry ─────────────────────────────────────────────
   // Ring is drawn in an SVG sibling to .island; sits ~7px outside the pill edge.
   const RING_PAD    = 7;    // gap between pill edge and ring stroke centre
@@ -150,6 +186,11 @@
   const cy          = svgH / 2;
   const circ        = $derived(2 * Math.PI * ringR);
   const dashOff     = $derived(progress.value >= 0 ? circ * (1 - progress.value / 100) : circ);
+
+  // Ring style: arc (default), full, bar
+  const ringStyle = $derived(moduleSettings.progress_ring_style || 'arc');
+  const strokeDasharray = $derived(ringStyle === 'full' ? circ : ringStyle === 'bar' ? circ * 0.5 : circ);
+  const dashOffset    = $derived(ringStyle === 'bar' ? circ * 0.25 : dashOff);
 
   // battery dot colour
   const battColour  = $derived(
@@ -242,14 +283,43 @@
     const offs = [
       on('media://update', applyMedia),
       on('island://toggle', toggle),
-      on('progress://update', ({ value, label }) => setProgress(value, label ?? '')),
+      on('progress://update', ({ value, label }) => {
+        // Filter based on progress type settings
+        const labelLower = (label ?? '').toLowerCase();
+        let shouldShow = true;
+
+        if (labelLower.includes('download') && moduleSettings.progress_download !== 'true') {
+          shouldShow = false;
+        }
+        if (labelLower.includes('install') && moduleSettings.progress_app_install !== 'true') {
+          shouldShow = false;
+        }
+        if (labelLower.includes('copy') && moduleSettings.progress_file_copy !== 'true') {
+          shouldShow = false;
+        }
+
+        if (shouldShow) {
+          setProgress(value, label ?? '');
+        }
+      }),
       on('progress://clear',  ()                 => clearProgress()),
       on('battery://update',  ({ charging, level }) => {
         progress.charging = charging;
         progress.battery  = level;
       }),
       on('settings://changed', () => {
-        call('settings_get_all').then(applySettings).catch(() => {});
+        call('settings_get_all').then((all) => {
+          applySettings(all);
+          // Also update media and progress-specific settings
+          if (all.media_album_art !== undefined) moduleSettings.media_album_art = all.media_album_art;
+          if (all.media_progress_ring !== undefined) moduleSettings.media_progress_ring = all.media_progress_ring;
+          if (all.progress_file_copy !== undefined) moduleSettings.progress_file_copy = all.progress_file_copy;
+          if (all.progress_download !== undefined) moduleSettings.progress_download = all.progress_download;
+          if (all.progress_app_install !== undefined) moduleSettings.progress_app_install = all.progress_app_install;
+          if (all.progress_battery_stretch !== undefined) moduleSettings.progress_battery_stretch = all.progress_battery_stretch;
+          if (all.progress_ring_style !== undefined) moduleSettings.progress_ring_style = all.progress_ring_style;
+          if (all.progress_auto_dismiss !== undefined) moduleSettings.progress_auto_dismiss = all.progress_auto_dismiss;
+        }).catch(() => {});
       }),
       on('system://hide', (shouldHide) => {
         if (shouldHide && ui.expanded) {
@@ -285,7 +355,7 @@
 <main class="stage" style:--accent={ui.accent}>
 
   <!-- ── progress ring ── lives outside .island so it's never clipped ── -->
-  {#if progress.value >= 0 && !ui.expanded}
+  {#if progress.value >= 0 && !ui.expanded && moduleSettings.media_progress_ring === 'true'}
     <svg
       class="progress-ring"
       width={svgW} height={svgH}
@@ -294,15 +364,22 @@
       in:fade={{ duration: 220 }}
       out:fade={{ duration: 350 }}
     >
-      <circle cx={cx} cy={cy} r={ringR} fill="none"
-        stroke="rgba(255,255,255,0.1)" stroke-width={RING_STROKE} />
-      <circle cx={cx} cy={cy} r={ringR} fill="none"
-        stroke={progress.value >= 100 ? '#4ade80' : 'var(--accent)'}
-        stroke-width={RING_STROKE} stroke-linecap="round"
-        stroke-dasharray={circ} stroke-dashoffset={dashOff}
-        transform="rotate(-90 {cx} {cy})"
-        class="arc"
-      />
+      {#if ringStyle === 'arc' || ringStyle === 'full'}
+        <circle cx={cx} cy={cy} r={ringR} fill="none"
+          stroke="rgba(255,255,255,0.1)" stroke-width={RING_STROKE} />
+        <circle cx={cx} cy={cy} r={ringR} fill="none"
+          stroke={progress.value >= 100 ? '#4ade80' : 'var(--accent)'}
+          stroke-width={RING_STROKE} stroke-linecap="round"
+          stroke-dasharray={strokeDasharray} stroke-dashoffset={dashOffset}
+          transform="rotate(-90 {cx} {cy})"
+          class="arc"
+        />
+      {:else if ringStyle === 'bar'}
+        <rect x={cx - ringR} y={cy - 4} width={ringR * 2} height={8} rx={4}
+          fill="rgba(255,255,255,0.1)" />
+        <rect x={cx - ringR} y={cy - 4} width={ringR * 2 * (progress.value / 100)} height={8} rx={4}
+          fill={progress.value >= 100 ? '#4ade80' : 'var(--accent)'} />
+      {/if}
     </svg>
   {/if}
 
@@ -364,7 +441,7 @@
 <style>
   .stage { position: fixed; inset: 0; display: flex; justify-content: var(--setting-pos, center); align-items: flex-start; padding-top: 6px; }
   :global(body) {
-    background: #0d0d0f;
+    background: transparent;
     color: #e8e8ea;
     font-family: 'Segoe UI', system-ui, sans-serif;
     font-size: 14px;
@@ -389,12 +466,15 @@
   .arc {
     transition: stroke-dashoffset .45s cubic-bezier(.4,0,.2,1), stroke .3s ease;
   }
+  .progress-ring rect {
+    transition: width .45s cubic-bezier(.4,0,.2,1), fill .3s ease;
+  }
 
   /* ── island ────────────────────────────────────────────────────────── */
   .island {
     --w: var(--setting-pill-w, 190px); --h: 38px; --r: var(--setting-radius, 19px);
     position: relative; width: var(--w); height: var(--h); border-radius: var(--r);
-    background: var(--setting-bg, var(--void)); overflow: hidden;
+    background: var(--setting-bg, transparent); overflow: hidden;
     opacity: var(--setting-opacity, 1);
     box-shadow: none;
     border: var(--setting-border, none);

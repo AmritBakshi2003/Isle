@@ -10,10 +10,27 @@
   let pos = $state(livePosition());
   const pct = $derived(media.duration_ms > 0 ? Math.min(1, pos / media.duration_ms) : 0);
 
-  onMount(() => {
-    const id = setInterval(() => (pos = livePosition()), 500);
+  let mediaSettings = $state({
+    album_art: 'true',
+    controls: 'full',
+    update_speed: '1000',
+  });
+
+  const updateInterval = $derived(Number(mediaSettings.update_speed));
+
+  onMount(async () => {
+    // Load media settings
+    try {
+      const all = await call('settings_get_all');
+      mediaSettings.album_art = all.media_album_art ?? 'true';
+      mediaSettings.controls = all.media_controls ?? 'full';
+      mediaSettings.update_speed = all.media_update_speed ?? '1000';
+    } catch (e) { console.warn('Failed to load media settings:', e); }
+
+    const id = setInterval(() => (pos = livePosition()), updateInterval);
     return () => clearInterval(id);
   });
+
   $effect(() => { media.sampled_at_ms; media.playing; pos = livePosition(); });
 
   const ctl = (cmd) => call('media_control', { cmd }).catch((e) => toast(e));
@@ -22,9 +39,11 @@
 <div class="view">
   {#if media.active}
     <div class="deck">
-      <div class="cover" style:background-image={media.art ? `url(${media.art})` : 'none'}>
-        {#if !media.art}<Icon name="music" size={34} />{/if}
-      </div>
+      {#if mediaSettings.album_art === 'true'}
+        <div class="cover" style:background-image={media.art ? `url(${media.art})` : 'none'}>
+          {#if !media.art}<Icon name="music" size={34} />{/if}
+        </div>
+      {/if}
       <div class="meta grow">
         <div class="title clip">{media.title || 'Unknown track'}</div>
         <div class="dim clip">{media.artist}{media.album ? ` · ${media.album}` : ''}</div>
@@ -35,11 +54,15 @@
     </div>
     <div class="times dim"><span>{fmtMs(pos)}</span><span>{media.duration_ms ? fmtMs(media.duration_ms) : ''}</span></div>
     <div class="controls">
-      <button class="icon-btn big" aria-label="Previous" onclick={() => ctl('prev')}><Icon name="prev" size={22} /></button>
+      {#if mediaSettings.controls === 'full'}
+        <button class="icon-btn big" aria-label="Previous" onclick={() => ctl('prev')}><Icon name="prev" size={22} /></button>
+      {/if}
       <button class="play" aria-label={media.playing ? 'Pause' : 'Play'} onclick={() => ctl('play_pause')}>
         <Icon name={media.playing ? 'pause' : 'play'} size={22} />
       </button>
-      <button class="icon-btn big" aria-label="Next" onclick={() => ctl('next')}><Icon name="next" size={22} /></button>
+      {#if mediaSettings.controls === 'full'}
+        <button class="icon-btn big" aria-label="Next" onclick={() => ctl('next')}><Icon name="next" size={22} /></button>
+      {/if}
     </div>
   {:else}
     <p class="empty">Nothing is playing.<br />Start music in Spotify, your browser or any media app and it shows up here.</p>

@@ -2,7 +2,7 @@
 //!
 //! Monitors Windows system state and emits events to the UI to hide/show the island.
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, State, Manager};
 use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -14,16 +14,10 @@ use windows::{
         GetForegroundWindow, GetWindowRect, IsZoomed, GetSystemMetrics,
         SM_CXSCREEN, SM_CYSCREEN,
     },
-    Win32::Foundation::HWND,
-    Win32::System::Power::{
-        POWER_SETTING_LEVEL, POWER_LEVEL_CHANGED,
-        POWER_NOTIFY_SETTING, RegisterPowerSettingNotification,
-        PowerGetActiveScheme, PowerSetActiveScheme,
-    },
-    Win32::System::LibraryLoader::GetModuleHandleW,
     Win32::UI::Input::KeyboardAndMouse::{
         GetLastInputInfo, LASTINPUTINFO,
     },
+    Win32::Foundation::{BOOL, HWND},
 };
 
 /// Global flags for system state
@@ -98,7 +92,7 @@ fn start_fullscreen_watcher(app: AppHandle, state: SystemState) {
 fn detect_fullscreen() -> bool {
     unsafe {
         let hwnd = GetForegroundWindow();
-        if hwnd == HWND(0) {
+        if hwnd.is_invalid() {
             return false;
         }
         
@@ -124,7 +118,7 @@ fn detect_fullscreen() -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn start_battery_saver_watcher(app: AppHandle, state: SystemState) {
+fn start_battery_saver_watcher(_app: AppHandle, _state: SystemState) {
     // Battery saver detection - simplified polling version
     // Full implementation would use RegisterPowerSettingNotification
     std::thread::spawn(move || {
@@ -160,7 +154,7 @@ fn start_idle_watcher(app: AppHandle, state: SystemState) {
                         dwTime: 0,
                     };
                     
-                    if GetLastInputInfo(&mut last_input).is_ok() {
+                    if GetLastInputInfo(&mut last_input).as_bool() {
                         let idle_ms = get_tick_count() - last_input.dwTime;
                         let idle_seconds = idle_ms / 1000;
                         
@@ -183,7 +177,9 @@ fn start_idle_watcher(app: AppHandle, state: SystemState) {
 #[cfg(target_os = "windows")]
 fn get_tick_count() -> u32 {
     unsafe {
-        windows::Win32::UI::WindowsAndMessaging::GetTickCount()
+        // Use GetTickCount64 for 64-bit systems, truncate to u32
+        let tick_count = windows::Win32::System::SystemInformation::GetTickCount64();
+        (tick_count & 0xFFFFFFFF) as u32
     }
 }
 

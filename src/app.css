@@ -7,7 +7,7 @@
  * (width/height/radius), which is one small element.
  */
 :root {
-  --void: #000;
+  --void: transparent;
   --ink: #f2eee6;
   --dim: #8d8b86;
   --row: rgba(255, 255, 255, 0.06);

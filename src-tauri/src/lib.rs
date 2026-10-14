@@ -17,6 +17,7 @@ mod clipboard;
 mod commands;
 mod db;
 mod island;
+mod logger;
 mod media;
 mod progress;
 mod scheduler;
@@ -51,14 +52,18 @@ pub fn run() {
             // 1. Database
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            app.manage(db::Db::open(&dir.join("isle.db"))?);
+            let db = db::Db::open(&dir.join("isle.db"))?;
+            app.manage(db);
+
+            // Initialize logger from DB settings
+            logger::init_from_db(&app.state::<db::Db>());
 
             // 2-4. Background services
             app.manage(scheduler::start(handle.clone()));
             media::start(handle.clone());
             clipboard::start(handle.clone());
             app.manage(progress::start(handle.clone())); // single-channel progress manager
-            
+
             // 5. System state detection (fullscreen, battery saver, idle)
             system::start(handle.clone());
 
@@ -171,6 +176,8 @@ pub fn run() {
             system::hide_fullscreen_set,
             system::hide_battery_saver_get,
             system::hide_battery_saver_set,
+            commands::reregister_hotkeys,
+            commands::reload_logger,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Isle");

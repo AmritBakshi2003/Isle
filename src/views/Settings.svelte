@@ -1,11 +1,12 @@
 <script>
   import { onMount } from 'svelte';
   import { call, on } from '../lib/api.js';
+  import Icon from '../lib/Icon.svelte';
 
   // -- default settings ------------------------------------------------------
   const DEFAULTS = {
     pill_size: 'medium', pill_position: 'center', corner_radius: '22',
-    bg_color: '#1a1a1a', bg_blur: 'auto', opacity: '95',
+    bg_color: 'rgba(26, 26, 26, 0)', bg_blur: 'auto', opacity: '95',
     border_on: 'false', border_color: '#6c6c6c',
     auto_hide: 'false', auto_hide_time: '30',
     hide_fullscreen: 'true', hide_battery_saver: 'false',
@@ -32,14 +33,14 @@
   let loaded = $state(false);
 
   const TABS = [
-    { id: 'appearance',   icon: '??', label: 'Appearance' },
-    { id: 'behavior',     icon: '??',  label: 'Behavior' },
-    { id: 'modules',      icon: '??', label: 'Modules' },
-    { id: 'media',        icon: '??', label: 'Media' },
-    { id: 'progress',     icon: '??', label: 'Live Progress' },
-    { id: 'performance',  icon: '?', label: 'Performance' },
-    { id: 'hotkeys',      icon: '??',  label: 'Hotkeys' },
-    { id: 'advanced',     icon: '??', label: 'Advanced' },
+    { id: 'appearance',   icon: 'appearance', label: 'Appearance' },
+    { id: 'behavior',     icon: 'behavior',  label: 'Behavior' },
+    { id: 'modules',      icon: 'modules', label: 'Modules' },
+    { id: 'media',        icon: 'media', label: 'Media' },
+    { id: 'progress',     icon: 'progress', label: 'Live Progress' },
+    { id: 'performance',  icon: 'performance', label: 'Performance' },
+    { id: 'hotkeys',      icon: 'hotkeys',  label: 'Hotkeys' },
+    { id: 'advanced',     icon: 'advanced', label: 'Advanced' },
   ];
 
   onMount(async () => {
@@ -54,10 +55,20 @@
 
   async function save(key, value) {
     s[key] = value;
-    try { 
-      await call('setting_set', { key, value: String(value) }); 
+    try {
+      await call('setting_set', { key, value: String(value) });
       // Emit Tauri event to notify main island to reload settings
       await call('emit_settings_changed');
+
+      // Re-register hotkeys if hotkey settings changed
+      if (key === 'hotkey_toggle' || key === 'hotkey_settings') {
+        await call('reregister_hotkeys');
+      }
+
+      // Reload logger if log_level changed
+      if (key === 'log_level') {
+        await call('reload_logger');
+      }
     } catch {}
     flash();
   }
@@ -136,17 +147,17 @@
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="logo">
-      <span class="pill-icon">?</span>
+      <Icon name="settings" size={20} />
       <span>Isle Settings</span>
     </div>
     {#each TABS as t}
       <button class="tab-btn" class:active={tab === t.id} onclick={() => tab = t.id}>
-        <span class="tab-icon">{t.icon}</span>
+        <Icon name={t.icon} size={16} />
         <span>{t.label}</span>
       </button>
     {/each}
     <div class="sidebar-footer">
-      {#if saved}<span class="saved-badge">? Saved</span>{/if}
+      {#if saved}<span class="saved-badge">✓ Saved</span>{/if}
     </div>
   </aside>
 
@@ -304,17 +315,17 @@
       <p class="hint">Toggle which tabs appear in the island.</p>
 
       {#each [
-        {key:'module_media',           label:'Media Player',          icon:'??'},
-        {key:'module_calendar',        label:'Calendar & Events',      icon:'??'},
-        {key:'module_tasks',           label:'Tasks',                  icon:'?'},
-        {key:'module_clipboard',       label:'Clipboard History',      icon:'??'},
-        {key:'module_system',          label:'System (Battery/Wi-Fi)', icon:'??'},
-        {key:'module_file_progress',   label:'File Copy Progress',     icon:'??'},
-        {key:'module_download_progress',label:'Download Progress',     icon:'??'},
+        {key:'module_media',           label:'Media Player',          icon:'media'},
+        {key:'module_calendar',        label:'Calendar & Events',      icon:'calendar'},
+        {key:'module_tasks',           label:'Tasks',                  icon:'tasks'},
+        {key:'module_clipboard',       label:'Clipboard History',      icon:'clips'},
+        {key:'module_system',          label:'System (Battery/Wi-Fi)', icon:'system'},
+        {key:'module_file_progress',   label:'File Copy Progress',     icon:'file_progress'},
+        {key:'module_download_progress',label:'Download Progress',     icon:'download_progress'},
       ] as m}
       <div class="module-row">
         <div class="module-info">
-          <span class="mod-icon">{m.icon}</span>
+          <Icon name={m.icon} size={18} />
           <span class="mod-label">{m.label}</span>
         </div>
         <button class="toggle" class:on={bool(s[m.key])}
@@ -468,7 +479,7 @@
       {/each}
 
       <div class="info-box">
-        Hotkey changes take effect after restarting Isle.<br/>
+        Hotkey changes take effect immediately.<br/>
         Current toggle: <strong>{s.hotkey_toggle}</strong>
       </div>
     </section>
@@ -569,7 +580,6 @@
     color: #fff;
     letter-spacing: -.3px;
   }
-  .pill-icon { font-size: 20px; }
   .tab-btn {
     display: flex;
     align-items: center;
@@ -597,7 +607,6 @@
     border-radius: 0 2px 2px 0;
   }
   .tab-btn { position: relative; }
-  .tab-icon { font-size: 16px; width: 20px; }
   .sidebar-footer {
     margin-top: auto;
     padding: 16px 20px;
@@ -725,7 +734,6 @@
     border-bottom: 1px solid #18181e;
   }
   .module-info { display: flex; align-items: center; gap: 12px; }
-  .mod-icon { font-size: 20px; }
   .mod-label { color: #c0c0c8; font-size: 13.5px; }
 
   /* -- Preview pill -- */

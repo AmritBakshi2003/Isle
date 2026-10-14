@@ -12,6 +12,8 @@
 use crate::{
     actions,
     db::{e2s, now, Db},
+    island,
+    logger,
     progress::ProgressHandle,
     scheduler::Scheduler,
 };
@@ -20,6 +22,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 fn json(s: String) -> Value {
     serde_json::from_str(&s).unwrap_or(Value::Null)
@@ -400,5 +403,30 @@ pub fn battery_get() -> serde_json::Value {
 #[tauri::command]
 pub fn emit_settings_changed(app: AppHandle) -> Result<(), String> {
     let _ = app.emit("settings://changed", ());
+    Ok(())
+}
+
+// ----------------------------------------------------------- performance settings
+
+/// Re-register hotkeys after they've been changed in settings
+#[tauri::command]
+pub fn reregister_hotkeys(app: AppHandle, db: State<Db>) -> Result<(), String> {
+    let toggle_hk = db.setting("hotkey_toggle").unwrap_or_else(|| "ctrl+alt+space".to_string());
+    let settings_hk = db.setting("hotkey_settings").unwrap_or_else(|| "ctrl+alt+comma".to_string());
+
+    // Unregister existing hotkeys first
+    let _ = app.global_shortcut().unregister_all();
+
+    // Re-register with new values
+    island::register_hotkey(&app);
+    island::register_settings_hotkey(&app, &settings_hk);
+
+    Ok(())
+}
+
+/// Reload logger when log_level setting changes
+#[tauri::command]
+pub fn reload_logger(app: AppHandle) -> Result<(), String> {
+    logger::init_from_db(&app);
     Ok(())
 }
