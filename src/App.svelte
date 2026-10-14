@@ -26,14 +26,27 @@
   import Calendar from './views/Calendar.svelte';
   import Modes from './views/Modes.svelte';
 
-  const tabs = [
-    { id: 'music', label: 'Music', icon: 'music' },
-    { id: 'clips', label: 'Clipboard', icon: 'clips' },
-    { id: 'tasks', label: 'Tasks', icon: 'tasks' },
-    { id: 'calendar', label: 'Calendar', icon: 'calendar' },
-    { id: 'modes', label: 'Modes', icon: 'modes' },
-    { id: 'settings', label: 'Settings', icon: 'settings' },
+  const allTabs = [
+    { id: 'music', label: 'Music', icon: 'music', setting: 'module_media' },
+    { id: 'clips', label: 'Clipboard', icon: 'clips', setting: 'module_clipboard' },
+    { id: 'tasks', label: 'Tasks', icon: 'tasks', setting: 'module_tasks' },
+    { id: 'calendar', label: 'Calendar', icon: 'calendar', setting: 'module_calendar' },
+    { id: 'modes', label: 'Modes', icon: 'modes', setting: null },
+    { id: 'settings', label: 'Settings', icon: 'settings', setting: null },
   ];
+  
+  let moduleSettings = $state({
+    module_media: 'true',
+    module_clipboard: 'true',
+    module_tasks: 'true',
+    module_calendar: 'true',
+  });
+  
+  const tabs = $derived(allTabs.filter(t => {
+    if (!t.setting) return true;
+    const val = moduleSettings[t.setting];
+    return val === 'true' || val === true;
+  }));
   const index = $derived(tabs.findIndex((t) => t.id === ui.tab));
 
   let clock = $state(fmtClock());
@@ -50,15 +63,30 @@
     pill_size: 'medium',
     pill_position: 'center',
     always_on_top: 'true',
+    click_action: 'expand',
+    module_media: 'true',
+    module_clipboard: 'true',
+    module_tasks: 'true',
+    module_calendar: 'true',
   };
 
   function applySettings(s) {
     if (!s) return;
     // Merge with defaults for missing keys
     const settings = { ...DEFAULT_SETTINGS, ...s };
+    
+    // Update module settings from loaded settings
+    Object.assign(moduleSettings, {
+      module_media: settings.module_media ?? 'true',
+      module_clipboard: settings.module_clipboard ?? 'true',
+      module_tasks: settings.module_tasks ?? 'true',
+      module_calendar: settings.module_calendar ?? 'true',
+    });
+    
     const root = document.documentElement;
-
-    // ── Appearance ──
+    
+    // Apply other settings
+    // ── Appearance ─
     if (settings.corner_radius) root.style.setProperty('--setting-radius', settings.corner_radius + 'px');
     if (settings.opacity) root.style.setProperty('--setting-opacity', String(Number(settings.opacity) / 100));
     if (settings.bg_color) root.style.setProperty('--setting-bg', settings.bg_color);
@@ -81,6 +109,12 @@
 
     settingsLoaded = true;
   }
+  
+  // Update tab count CSS variable when tabs change
+  $effect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--tab-count', String(tabs.length));
+  });
 
   // ── progress ring geometry ─────────────────────────────────────────────
   // Ring is drawn in an SVG sibling to .island; sits ~7px outside the pill edge.
@@ -118,6 +152,14 @@
     closeTimer = setTimeout(() => call('island_resize', { expanded: false }), 520);
   }
   const toggle = () => (ui.expanded ? collapse() : expand());
+  
+  function handlePillClick() {
+    const action = moduleSettings.click_action || 'expand';
+    if (action === 'expand') {
+      toggle();
+    }
+    // If action is 'nothing', do nothing
+  }
 
   function openSettings() {
     console.log('Opening settings...');
@@ -234,7 +276,7 @@
     aria-label="Isle"
   >
     {#if !ui.expanded}
-      <button class="mini" onclick={expand} aria-label="Open Isle" in:fade={{ duration: 160, delay: 220 }}>
+      <button class="mini" onclick={handlePillClick} aria-label="Open Isle" in:fade={{ duration: 160, delay: 220 }}>
         {#if media.active && media.playing}
           <span class="art" style:background-image={media.art ? `url(${media.art})` : 'none'}></span>
           <span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -283,6 +325,17 @@
 
 <style>
   .stage { position: fixed; inset: 0; display: flex; justify-content: var(--setting-pos, center); align-items: flex-start; padding-top: 6px; }
+  :global(body) {
+    background: #0d0d0f;
+    color: #e8e8ea;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 14px;
+    height: 100vh;
+    overflow: hidden;
+  }
+  :global(html) {
+    --tab-count: 6;
+  }
 
   /* ── progress ring ─────────────────────────────────────────────────── */
   .progress-ring {
@@ -355,8 +408,8 @@
 
   /* ── expanded ──────────────────────────────────────────────────────── */
   .content { position: absolute; top: 0; left: 50%; width: 500px; height: 326px; margin-left: -250px; display: flex; flex-direction: column; }
-  .tabs { position: relative; display: grid; grid-template-columns: repeat(6, 1fr); margin: 12px 16px 0; padding: 3px; background: var(--row); border-radius: 14px; flex: none; }
-  .pill { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 6); border-radius: 11px; background: var(--row-hi);
+  .tabs { position: relative; display: grid; grid-template-columns: repeat(var(--tab-count, 6), 1fr); margin: 12px 16px 0; padding: 3px; background: var(--row); border-radius: 14px; flex: none; }
+  .pill { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / var(--tab-count, 6)); border-radius: 11px; background: var(--row-hi);
     transform: translateX(calc(var(--i) * 100%)); transition: transform .45s var(--spring); }
   .tab { position: relative; height: 30px; display: grid; place-items: center; color: var(--dim); transition: color .2s; }
   .tab.active, .tab:hover { color: var(--ink); }
