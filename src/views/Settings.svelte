@@ -28,6 +28,7 @@
   let tab = $state('appearance');
   let saved = $state(false);
   let recordingKey = $state(null);
+  let loaded = $state(false);
 
   const TABS = [
     { id: 'appearance',   icon: '??', label: 'Appearance' },
@@ -43,9 +44,11 @@
   onMount(async () => {
     try {
       const all = await call('settings_get_all');
-      if (all) Object.assign(s, all);
+      // Merge loaded settings with defaults, keeping defaults for missing keys
+      Object.assign(s, DEFAULTS, all);
+      loaded = true;
       s.autostart = await call('autostart_get');
-    } catch(e) { console.warn('settings load:', e); }
+    } catch(e) { console.warn('settings load:', e); loaded = true; }
   });
 
   async function save(key, value) {
@@ -70,7 +73,8 @@
     for (const [k, v] of Object.entries(DEFAULTS)) {
       await call('setting_set', { key: k, value: v });
     }
-    Object.assign(s, { ...DEFAULTS, autostart: false });
+    Object.assign(s, DEFAULTS);
+    s.autostart = false;
     await call('autostart_set', { enabled: false });
     flash();
   }
@@ -120,6 +124,9 @@
   const bool = (v) => v === 'true' || v === true;
 </script>
 
+{#if !loaded}
+  <div class="loading">Loading settings…</div>
+{:else}
 <div class="settings-root">
   <!-- Sidebar -->
   <aside class="sidebar">
@@ -510,6 +517,7 @@
 
   </main>
 </div>
+{/if}
 
 <style>
   :global(*, *::before, *::after) { box-sizing: border-box; margin: 0; padding: 0; }
@@ -520,6 +528,15 @@
     font-size: 14px;
     height: 100vh;
     overflow: hidden;
+  }
+
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    color: #666;
+    font-size: 14px;
   }
 
   .settings-root {

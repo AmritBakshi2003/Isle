@@ -25,6 +25,22 @@
         "shadow": false,
         "focus": false,
         "visible": true
+      },
+      {
+        "label": "settings",
+        "title": "Isle Settings",
+        "url": "settings.html",
+        "width": 720,
+        "height": 680,
+        "minWidth": 640,
+        "minHeight": 560,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "resizable": true,
+        "center": true,
+        "visible": false
       }
     ],
     "trayIcon": {
@@ -35,7 +51,7 @@
       "title": "Isle"
     },
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; connect-src 'self' ws://localhost:1420"
     }
   },
 

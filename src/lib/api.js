@@ -151,8 +151,8 @@ function mock(cmd, a) {
     case 'settings_get_all': return { ...D.settings };
     case 'open_settings': console.info('[mock] open_settings — no-op in browser'); return;
     case 'apply_window_settings': return; // no-op in browser
-    case 'autostart_get': return D.settings.autostart === '1';
-    case 'autostart_set': D.settings.autostart = a.enabled ? '1' : '0'; return;
+    case 'autostart_get': return false; // default to false in mock
+    case 'autostart_set': return; // no-op in mock
     // progress API
     case 'progress_push':
       emit('progress://update', { value: a.value ?? 0, label: a.label ?? '' });

@@ -32,6 +32,7 @@
     { id: 'tasks', label: 'Tasks', icon: 'tasks' },
     { id: 'calendar', label: 'Calendar', icon: 'calendar' },
     { id: 'modes', label: 'Modes', icon: 'modes' },
+    { id: 'settings', label: 'Settings', icon: 'settings' },
   ];
   const index = $derived(tabs.findIndex((t) => t.id === ui.tab));
 
@@ -40,29 +41,42 @@
   let settingsLoaded = $state(false);
 
   // ── apply appearance + behavior settings ───────────────────────────────
+  const DEFAULT_SETTINGS = {
+    corner_radius: '22',
+    opacity: '95',
+    bg_color: '#1a1a1a',
+    border_on: 'false',
+    border_color: '#6c6c6c',
+    pill_size: 'medium',
+    pill_position: 'center',
+    always_on_top: 'true',
+  };
+
   function applySettings(s) {
     if (!s) return;
+    // Merge with defaults for missing keys
+    const settings = { ...DEFAULT_SETTINGS, ...s };
     const root = document.documentElement;
 
     // ── Appearance ──
-    if (s.corner_radius) root.style.setProperty('--setting-radius', s.corner_radius + 'px');
-    if (s.opacity) root.style.setProperty('--setting-opacity', String(Number(s.opacity) / 100));
-    if (s.bg_color) root.style.setProperty('--setting-bg', s.bg_color);
+    if (settings.corner_radius) root.style.setProperty('--setting-radius', settings.corner_radius + 'px');
+    if (settings.opacity) root.style.setProperty('--setting-opacity', String(Number(settings.opacity) / 100));
+    if (settings.bg_color) root.style.setProperty('--setting-bg', settings.bg_color);
     root.style.setProperty('--setting-border',
-      s.border_on === 'true' ? `1px solid ${s.border_color || '#fff'}` : 'none');
+      settings.border_on === 'true' ? `1px solid ${settings.border_color || '#fff'}` : 'none');
 
     // pill size → collapsed pill width CSS var
     const sizeMap = { small: '160px', medium: '190px', large: '230px' };
-    root.style.setProperty('--setting-pill-w', sizeMap[s.pill_size] || '190px');
+    root.style.setProperty('--setting-pill-w', sizeMap[settings.pill_size] || '190px');
 
     // pill position → stage justify-content CSS var
     const posMap = { left: 'flex-start', center: 'center', right: 'flex-end' };
-    root.style.setProperty('--setting-pos', posMap[s.pill_position] || 'center');
+    root.style.setProperty('--setting-pos', posMap[settings.pill_position] || 'center');
 
     // ── Behavior ──
     // always_on_top: tell backend to update the window property
-    if (inTauri && s.always_on_top !== undefined) {
-      call('apply_window_settings', { alwaysOnTop: s.always_on_top === 'true' }).catch(() => {});
+    if (inTauri && settings.always_on_top !== undefined) {
+      call('apply_window_settings', { alwaysOnTop: settings.always_on_top === 'true' }).catch(() => {});
     }
 
     settingsLoaded = true;
@@ -105,9 +119,29 @@
   }
   const toggle = () => (ui.expanded ? collapse() : expand());
 
+  function openSettings() {
+    console.log('Opening settings...');
+    call('open_settings').then(() => {
+      console.log('Settings opened successfully');
+    }).catch((err) => {
+      console.error('Failed to open settings:', err);
+    });
+  }
+
+  function handleTabClick(tabId) {
+    console.log('Tab clicked:', tabId);
+    if (tabId === 'settings') {
+      openSettings();
+      // Switch back to music tab after opening settings
+      ui.tab = 'music';
+    } else {
+      ui.tab = tabId;
+    }
+  }
+
   function onKey(e) {
     if (e.key === 'Escape') collapse();
-    else if (ui.expanded && e.altKey && /^[1-5]$/.test(e.key)) ui.tab = tabs[+e.key - 1].id;
+    else if (ui.expanded && e.altKey && /^[1-6]$/.test(e.key)) ui.tab = tabs[+e.key - 1].id;
   }
 
   $effect(() => {
@@ -218,22 +252,15 @@
         {#if progress.value >= 0 && progress.label}
           <span class="prog-label" in:fade={{ duration: 140 }} out:fade={{ duration: 100 }}>{progress.label}</span>
         {/if}
-
-        <!-- gear icon — opens settings window, visible on pill hover -->
-        <!-- Must be a div, not button, since it's inside the .mini button -->
-        <div class="gear" role="button" tabindex="0"
-          onclick={(e) => { e.stopPropagation(); call('open_settings'); }}
-          onkeydown={(e) => e.key === 'Enter' && call('open_settings')}
-          aria-label="Open Isle Settings" title="Settings"
-        >⚙</div>
       </button>
-    {:else}
+    {/if}
+    {#if ui.expanded}
       <div class="content" in:fade={{ duration: 200, delay: 170 }} out:fade={{ duration: 90 }}>
         <nav class="tabs" aria-label="Sections" style:--i={index}>
           <span class="pill" aria-hidden="true"></span>
           {#each tabs as t}
-            <button class="tab" class:active={ui.tab === t.id} onclick={() => (ui.tab = t.id)}
-              aria-label={t.label} title="{t.label} (Alt+{tabs.indexOf(t) + 1})" aria-current={ui.tab === t.id}>
+            <button class="tab" class:active={ui.tab === t.id} onclick={() => handleTabClick(t.id)}
+              aria-label={t.label} title="{t.label}" aria-current={ui.tab === t.id}>
               <Icon name={t.icon} />
             </button>
           {/each}
@@ -243,7 +270,10 @@
           {:else if ui.tab === 'clips'}<Clips />
           {:else if ui.tab === 'tasks'}<Tasks />
           {:else if ui.tab === 'calendar'}<Calendar />
-          {:else}<Modes />{/if}
+          {:else if ui.tab === 'modes'}<Modes />
+          {:else if ui.tab === 'settings'}
+            <div class="settings-hint">Opening settings…</div>
+          {/if}
         </section>
         {#if ui.toast}<div class="toast" in:fade={{ duration: 120 }} out:fade={{ duration: 160 }}>{ui.toast}</div>{/if}
       </div>
@@ -280,7 +310,7 @@
     transition: width .6s var(--spring), height .6s var(--spring), border-radius .6s var(--spring);
     z-index: 2;
   }
-  .island.open     { --w: 440px; --h: 326px; --r: 30px; }
+  .island.open     { --w: 500px; --h: 326px; --r: 30px; }
   .island.charging { --w: 206px; } /* pill stretches when charger plugged */
 
   /* ── collapsed ─────────────────────────────────────────────────────── */
@@ -323,29 +353,23 @@
     color: var(--accent); white-space: nowrap; pointer-events: none; opacity: .85;
   }
 
-  /* gear button — appears on pill hover; absolute so it doesn't shift layout */
-  .gear {
-    position: absolute;
-    right: 6px; top: 50%; transform: translateY(-50%);
-    background: none; border: none; color: rgba(255,255,255,.45);
-    font-size: 13px; cursor: pointer; padding: 4px;
-    border-radius: 50%;
-    opacity: 0;
-    transition: opacity .18s, color .18s;
-    line-height: 1;
-  }
-  .mini:hover .gear { opacity: 1; }
-  .gear:hover { color: rgba(255,255,255,.9) !important; background: rgba(255,255,255,.08); }
-
   /* ── expanded ──────────────────────────────────────────────────────── */
-  .content { position: absolute; top: 0; left: 50%; width: 440px; height: 326px; margin-left: -220px; display: flex; flex-direction: column; }
-  .tabs { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); margin: 12px 16px 0; padding: 3px; background: var(--row); border-radius: 14px; flex: none; }
-  .pill { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 5); border-radius: 11px; background: var(--row-hi);
+  .content { position: absolute; top: 0; left: 50%; width: 500px; height: 326px; margin-left: -250px; display: flex; flex-direction: column; }
+  .tabs { position: relative; display: grid; grid-template-columns: repeat(6, 1fr); margin: 12px 16px 0; padding: 3px; background: var(--row); border-radius: 14px; flex: none; }
+  .pill { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 6); border-radius: 11px; background: var(--row-hi);
     transform: translateX(calc(var(--i) * 100%)); transition: transform .45s var(--spring); }
   .tab { position: relative; height: 30px; display: grid; place-items: center; color: var(--dim); transition: color .2s; }
   .tab.active, .tab:hover { color: var(--ink); }
   .tab.active { color: var(--accent); }
   .body { flex: 1; min-height: 0; }
+  .settings-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--dim);
+    font-size: 13px;
+  }
   .toast { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); background: #fff; color: #111; font-weight: 600;
     padding: 6px 12px; border-radius: 999px; max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 </style>

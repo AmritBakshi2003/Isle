@@ -15,7 +15,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 pub const COLLAPSED: (f64, f64) = (200.0, 46.0);
-pub const EXPANDED:  (f64, f64) = (460.0, 352.0);
+pub const EXPANDED:  (f64, f64) = (500.0, 352.0);
 
 // ── single-instance guard ────────────────────────────────────────────────────
 // Try to bind a local TCP port. If it's already taken, another Isle is running.
@@ -72,41 +72,17 @@ pub fn island_resize(app: AppHandle, expanded: bool) {
     resize(&app, expanded);
 }
 
-// ── settings window (created lazily, not at startup) ─────────────────────────
-// Creating two WebView2 instances at startup caused HRESULT 0x800700AA race
-// conditions on cold start. The settings window is now created on first open.
+// ── settings window (pre-created in tauri.conf.json, hidden by default) ─────
+// The window is created at startup alongside the main pill but starts hidden.
+// Close events are intercepted to hide instead of destroy, so it can be reopened.
 
-/// Show the settings window. Creates it on first call; re-shows if hidden.
+/// Show the settings window. The window is pre-created in tauri.conf.json but hidden.
 pub fn show_settings(app: &AppHandle) {
-    // If the window already exists, just show + focus it.
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.show();
         let _ = w.set_focus();
-        return;
-    }
-    // Create it lazily.
-    let url = if cfg!(debug_assertions) {
-        // Dev mode: Vite dev server
-        tauri::WebviewUrl::External("http://localhost:1420/settings.html".parse().unwrap())
     } else {
-        // Production: bundled frontend
-        tauri::WebviewUrl::App("settings.html".into())
-    };
-    match tauri::WebviewWindowBuilder::new(app, "settings", url)
-        .title("Isle Settings")
-        .inner_size(720.0, 680.0)
-        .min_inner_size(640.0, 560.0)
-        .decorations(true)
-        .transparent(false)
-        .always_on_top(false)
-        .skip_taskbar(false)
-        .resizable(true)
-        .center()
-        .visible(true)
-        .build()
-    {
-        Ok(w) => { let _ = w.set_focus(); }
-        Err(e) => eprintln!("[isle] failed to create settings window: {}", e),
+        eprintln!("[isle] settings window not found in config");
     }
 }
 

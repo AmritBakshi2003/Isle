@@ -83,7 +83,16 @@ pub fn run() {
                 .menu(&menu)
                 .tooltip("Isle — Dynamic Island for Windows")
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        // Actually quit - destroy both windows
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.destroy();
+                        }
+                        if let Some(w) = app.get_webview_window("settings") {
+                            let _ = w.destroy();
+                        }
+                        app.exit(0);
+                    }
                     "show" => {
                         if let Some(w) = app.get_webview_window("main") {
                             if w.is_visible().unwrap_or(false) {
@@ -104,16 +113,12 @@ pub fn run() {
 
             Ok(())
         })
-        // Close → hide for the main pill (lives permanently in background).
-        // Settings window is allowed to close normally.
+        // Close → hide for both windows (both live permanently in background).
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" {
-                    // Main pill: hide instead of closing so it stays in the tray
-                    window.hide().unwrap_or(());
-                    api.prevent_close();
-                }
-                // Settings window: let it close normally (destroyed + recreated on next open)
+                // Both main pill and settings window: hide instead of closing
+                window.hide().unwrap_or(());
+                api.prevent_close();
             }
         })
         .invoke_handler(tauri::generate_handler![
