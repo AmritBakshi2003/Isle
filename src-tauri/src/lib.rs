@@ -55,9 +55,6 @@ pub fn run() {
             let db = db::Db::open(&dir.join("isle.db"))?;
             app.manage(db);
 
-            // Initialize logger from DB settings
-            logger::init_from_db(&app.state::<db::Db>());
-
             // 2-4. Background services
             app.manage(scheduler::start(handle.clone()));
             media::start(handle.clone());
@@ -66,6 +63,9 @@ pub fn run() {
 
             // 5. System state detection (fullscreen, battery saver, idle)
             system::start(handle.clone());
+
+            // Initialize logger from DB settings (after DB is managed)
+            logger::init_from_db(&handle);
 
             // 5. Window placement
             island::resize(&handle, false);

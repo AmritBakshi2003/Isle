@@ -4,6 +4,8 @@
 //! The default is 'error' - only critical errors are logged.
 //! Set via the 'log_level' setting in the database.
 
+use tauri::Manager;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub enum LogLevel {
     None,

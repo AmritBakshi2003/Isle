@@ -14,22 +14,6 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-use crate::logger;
-//!
-//! WHY the OS window is resized: a transparent always-on-top window still
-//! captures mouse clicks over its whole rectangle. So the window is only as big
-//! as the island needs. The UI (see src/App.svelte) must call `island_resize`
-//! BEFORE it starts the expand animation, and AFTER the collapse animation ends.
-//!
-//! Sizes are LOGICAL pixels and must match the CSS in src/app.css:
-//!   collapsed pill 190x38, expanded pill 440x326, plus transparent margins that
-//!   leave room for the spring overshoot and the soft shadow.
-
-use tauri::{
-    plugin::TauriPlugin, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Wry,
-};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-
 pub const COLLAPSED: (f64, f64) = (200.0, 46.0);
 pub const EXPANDED:  (f64, f64) = (500.0, 352.0);
 
@@ -132,14 +116,8 @@ pub fn hotkey_plugin() -> TauriPlugin<Wry> {
 /// we log a warning but do NOT crash.
 pub fn register_hotkey(app: &AppHandle) {
     match app.global_shortcut().register("ctrl+alt+space") {
-        Ok(_)  => {
-            logger::info("hotkey Ctrl+Alt+Space registered");
-            eprintln!("[isle] hotkey Ctrl+Alt+Space registered");
-        }
-        Err(e) => {
-            logger::error(&format!("hotkey registration skipped ({}). Use tray to toggle.", e));
-            eprintln!("[isle] hotkey registration skipped ({}). Use tray to toggle.", e);
-        }
+        Ok(_)  => eprintln!("[isle] hotkey Ctrl+Alt+Space registered"),
+        Err(e) => eprintln!("[isle] hotkey registration skipped ({}). Use tray to toggle.", e),
     }
 }
 
@@ -148,13 +126,7 @@ pub fn register_hotkey(app: &AppHandle) {
 /// that does NOT contain "space" will open the settings window.
 pub fn register_settings_hotkey(app: &AppHandle, hotkey: &str) {
     match app.global_shortcut().register(hotkey) {
-        Ok(_)  => {
-            logger::info(&format!("settings hotkey {} registered", hotkey));
-            eprintln!("[isle] settings hotkey {} registered", hotkey);
-        }
-        Err(e) => {
-            logger::error(&format!("settings hotkey skipped ({})", e));
-            eprintln!("[isle] settings hotkey skipped ({})", e);
-        }
+        Ok(_)  => eprintln!("[isle] settings hotkey {} registered", hotkey),
+        Err(e) => eprintln!("[isle] settings hotkey skipped ({})", e),
     }
 }

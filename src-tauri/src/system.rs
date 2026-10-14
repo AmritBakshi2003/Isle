@@ -17,7 +17,6 @@ use windows::{
     Win32::UI::Input::KeyboardAndMouse::{
         GetLastInputInfo, LASTINPUTINFO,
     },
-    Win32::Foundation::{BOOL, HWND},
 };
 
 /// Global flags for system state
