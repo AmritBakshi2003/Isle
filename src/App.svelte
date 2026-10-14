@@ -40,6 +40,9 @@
     module_clipboard: 'true',
     module_tasks: 'true',
     module_calendar: 'true',
+    click_action: 'expand',
+    blur_on_battery: 'false',
+    bg_blur: 'auto',
   });
   
   const tabs = $derived(allTabs.filter(t => {
@@ -58,6 +61,7 @@
     corner_radius: '22',
     opacity: '95',
     bg_color: '#1a1a1a',
+    bg_blur: 'auto',
     border_on: 'false',
     border_color: '#6c6c6c',
     pill_size: 'medium',
@@ -68,6 +72,7 @@
     module_clipboard: 'true',
     module_tasks: 'true',
     module_calendar: 'true',
+    blur_on_battery: 'false',
   };
 
   function applySettings(s) {
@@ -81,6 +86,9 @@
       module_clipboard: settings.module_clipboard ?? 'true',
       module_tasks: settings.module_tasks ?? 'true',
       module_calendar: settings.module_calendar ?? 'true',
+      click_action: settings.click_action ?? 'expand',
+      blur_on_battery: settings.blur_on_battery ?? 'false',
+      bg_blur: settings.bg_blur ?? 'auto',
     });
     
     const root = document.documentElement;
@@ -92,6 +100,9 @@
     if (settings.bg_color) root.style.setProperty('--setting-bg', settings.bg_color);
     root.style.setProperty('--setting-border',
       settings.border_on === 'true' ? `1px solid ${settings.border_color || '#fff'}` : 'none');
+    
+    // Background blur
+    root.style.setProperty('--setting-blur', settings.bg_blur || 'auto');
 
     // pill size → collapsed pill width CSS var
     const sizeMap = { small: '160px', medium: '190px', large: '230px' };
@@ -115,6 +126,16 @@
     const root = document.documentElement;
     root.style.setProperty('--tab-count', String(tabs.length));
   });
+  
+  // Update blur based on battery state when blur_on_battery is enabled
+  $effect(() => {
+    const root = document.documentElement;
+    if (moduleSettings.blur_on_battery === 'true' && progress.battery !== null && !progress.charging) {
+      root.style.setProperty('--setting-blur', 'none');
+    } else {
+      root.style.setProperty('--setting-blur', moduleSettings.bg_blur || 'auto');
+    }
+  });
 
   // ── progress ring geometry ─────────────────────────────────────────────
   // Ring is drawn in an SVG sibling to .island; sits ~7px outside the pill edge.
@@ -135,6 +156,11 @@
     progress.battery === null ? 'transparent' :
     progress.battery > 0.5   ? '#4ade80' :
     progress.battery > 0.2   ? '#facc15' : '#f87171'
+  );
+  
+  // Battery-based blur
+  const shouldDisableBlur = $derived(
+    moduleSettings.blur_on_battery === 'true' && progress.battery !== null && !progress.charging
   );
 
   // ── expand / collapse ──────────────────────────────────────────────────

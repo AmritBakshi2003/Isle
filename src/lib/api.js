@@ -60,6 +60,7 @@ const D = {
     auto_hide: 'false', auto_hide_time: '30',
     hide_fullscreen: 'true', hide_battery_saver: 'false',
     click_action: 'expand', always_on_top: 'true',
+    blur_on_battery: 'false',
     // modules
     module_media: 'true', module_calendar: 'true', module_tasks: 'true',
     module_clipboard: 'true', module_system: 'true',
@@ -147,6 +148,12 @@ function mock(cmd, a) {
     case 'routine_run': return;
     case 'wallpaper_next': if (!D.settings.wallpaper_dir) throw 'Set a wallpaper folder first'; return;
     case 'setting_get': return D.settings[a.key] ?? null;
+    case 'auto_hide_get': return D.settings.auto_hide ?? false;
+    case 'auto_hide_set': D.settings.auto_hide = a.enabled; return;
+    case 'hide_fullscreen_get': return D.settings.hide_fullscreen ?? true;
+    case 'hide_fullscreen_set': D.settings.hide_fullscreen = a.enabled; return;
+    case 'hide_battery_saver_get': return D.settings.hide_battery_saver ?? false;
+    case 'hide_battery_saver_set': D.settings.hide_battery_saver = a.enabled; return;
     case 'setting_set': D.settings[a.key] = a.value; return;
     case 'settings_get_all': return { ...D.settings };
     case 'open_settings': console.info('[mock] open_settings — no-op in browser'); return;

@@ -20,6 +20,7 @@ mod island;
 mod media;
 mod progress;
 mod scheduler;
+mod system;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -158,6 +159,12 @@ pub fn run() {
             commands::progress_push,
             commands::progress_clear,
             commands::battery_get,
+            system::auto_hide_get,
+            system::auto_hide_set,
+            system::hide_fullscreen_get,
+            system::hide_fullscreen_set,
+            system::hide_battery_saver_get,
+            system::hide_battery_saver_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Isle");
