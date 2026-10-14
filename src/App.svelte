@@ -1,0 +1,351 @@
+<!--
+  App.svelte: the island shell. Owns expand/collapse, tabs, global events.
+
+  Expand sequence (order matters, see src-tauri/src/island.rs):
+    expand():   invoke island_resize(true) -> set ui.expanded -> CSS morphs the pill
+    collapse(): set ui.expanded=false -> wait for the morph -> island_resize(false)
+  Collapse triggers: Esc, window blur (click elsewhere), hotkey toggle, pill click when open? (no).
+  Sizes in app.css/.island MUST match COLLAPSED/EXPANDED in island.rs.
+
+  Live Progress additions:
+    - SVG progress ring lives *outside* .island overflow:hidden, absolutely centred on the pill.
+    - .island.charging widens the pill by 16px (CSS transition handles spring).
+    - Battery dot and bolt icon fade in/out as charging state changes.
+    - Subscribes to progress://update, progress://clear, battery://update events.
+-->
+<script>
+  import { onMount } from 'svelte';
+  import { fade } from 'svelte/transition';
+  import { call, on, inTauri } from './lib/api.js';
+  import { ui, media, progress, setProgress, clearProgress, applyMedia, accentFromArt } from './lib/state.svelte.js';
+  import { fmtClock } from './lib/util.js';
+  import Icon from './lib/Icon.svelte';
+  import Music from './views/Music.svelte';
+  import Clips from './views/Clips.svelte';
+  import Tasks from './views/Tasks.svelte';
+  import Calendar from './views/Calendar.svelte';
+  import Modes from './views/Modes.svelte';
+
+  const tabs = [
+    { id: 'music', label: 'Music', icon: 'music' },
+    { id: 'clips', label: 'Clipboard', icon: 'clips' },
+    { id: 'tasks', label: 'Tasks', icon: 'tasks' },
+    { id: 'calendar', label: 'Calendar', icon: 'calendar' },
+    { id: 'modes', label: 'Modes', icon: 'modes' },
+  ];
+  const index = $derived(tabs.findIndex((t) => t.id === ui.tab));
+
+  let clock = $state(fmtClock());
+  let closeTimer;
+  let settingsLoaded = $state(false);
+
+  // ── apply appearance + behavior settings ───────────────────────────────
+  function applySettings(s) {
+    if (!s) return;
+    const root = document.documentElement;
+
+    // ── Appearance ──
+    if (s.corner_radius) root.style.setProperty('--setting-radius', s.corner_radius + 'px');
+    if (s.opacity) root.style.setProperty('--setting-opacity', String(Number(s.opacity) / 100));
+    if (s.bg_color) root.style.setProperty('--setting-bg', s.bg_color);
+    root.style.setProperty('--setting-border',
+      s.border_on === 'true' ? `1px solid ${s.border_color || '#fff'}` : 'none');
+
+    // pill size → collapsed pill width CSS var
+    const sizeMap = { small: '160px', medium: '190px', large: '230px' };
+    root.style.setProperty('--setting-pill-w', sizeMap[s.pill_size] || '190px');
+
+    // pill position → stage justify-content CSS var
+    const posMap = { left: 'flex-start', center: 'center', right: 'flex-end' };
+    root.style.setProperty('--setting-pos', posMap[s.pill_position] || 'center');
+
+    // ── Behavior ──
+    // always_on_top: tell backend to update the window property
+    if (inTauri && s.always_on_top !== undefined) {
+      call('apply_window_settings', { alwaysOnTop: s.always_on_top === 'true' }).catch(() => {});
+    }
+
+    settingsLoaded = true;
+  }
+
+  // ── progress ring geometry ─────────────────────────────────────────────
+  // Ring is drawn in an SVG sibling to .island; sits ~7px outside the pill edge.
+  const RING_PAD    = 7;    // gap between pill edge and ring stroke centre
+  const RING_STROKE = 3;
+  const PILL_W      = $derived(!ui.expanded && progress.charging ? 206 : 190);
+  const PILL_H      = 38;
+  const ringR       = $derived(PILL_H / 2 + RING_PAD);
+  const svgW        = $derived(PILL_W + (RING_PAD + RING_STROKE + 2) * 2);
+  const svgH        = PILL_H + (RING_PAD + RING_STROKE + 2) * 2;
+  const cx          = $derived(svgW / 2);
+  const cy          = svgH / 2;
+  const circ        = $derived(2 * Math.PI * ringR);
+  const dashOff     = $derived(progress.value >= 0 ? circ * (1 - progress.value / 100) : circ);
+
+  // battery dot colour
+  const battColour  = $derived(
+    progress.battery === null ? 'transparent' :
+    progress.battery > 0.5   ? '#4ade80' :
+    progress.battery > 0.2   ? '#facc15' : '#f87171'
+  );
+
+  // ── expand / collapse ──────────────────────────────────────────────────
+  async function expand() {
+    if (ui.expanded) return;
+    clearTimeout(closeTimer);
+    await call('island_resize', { expanded: true });
+    ui.expanded = true;
+    call('media_get').then(applyMedia);
+  }
+  function collapse() {
+    if (!ui.expanded) return;
+    ui.expanded = false;
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => call('island_resize', { expanded: false }), 520);
+  }
+  const toggle = () => (ui.expanded ? collapse() : expand());
+
+  function onKey(e) {
+    if (e.key === 'Escape') collapse();
+    else if (ui.expanded && e.altKey && /^[1-5]$/.test(e.key)) ui.tab = tabs[+e.key - 1].id;
+  }
+
+  $effect(() => {
+    const art = media.art;
+    accentFromArt(art).then((c) => (ui.accent = c));
+  });
+
+  // ── battery ────────────────────────────────────────────────────────────
+  // In Tauri mode: the Rust progress.rs watcher pushes battery://update events
+  // automatically via Battery::ReportUpdated — zero polling, zero CPU.
+  // In browser dev mode only: fall back to navigator.getBattery().
+  async function refreshBattery() {
+    if (inTauri) return; // Rust watcher handles it via battery://update events
+    if (typeof navigator !== 'undefined' && navigator.getBattery) {
+      try {
+        const b = await navigator.getBattery();
+        progress.charging = b.charging;
+        progress.battery  = b.level;
+        // Wire live events for the browser session.
+        b.onchargingchange = () => { progress.charging = b.charging; };
+        b.onlevelchange    = () => { progress.battery  = b.level;    };
+      } catch { /* not supported */ }
+    }
+  }
+
+  onMount(() => {
+    if (!inTauri) document.documentElement.style.background = 'linear-gradient(135deg,#2a3142,#4b3b52)';
+    call('media_get').then(applyMedia);
+
+    const offs = [
+      on('media://update', applyMedia),
+      on('island://toggle', toggle),
+      on('progress://update', ({ value, label }) => setProgress(value, label ?? '')),
+      on('progress://clear',  ()                 => clearProgress()),
+      on('battery://update',  ({ charging, level }) => {
+        progress.charging = charging;
+        progress.battery  = level;
+      }),
+    ];
+    const onBlur = () => inTauri && collapse();
+    window.addEventListener('blur', onBlur);
+
+    const tick = () => {
+      clock = fmtClock();
+      // Only poll battery in browser dev mode.
+      // In Tauri mode battery://update events arrive from the Rust watcher.
+      if (!inTauri) refreshBattery();
+      t = setTimeout(tick, 60000 - (Date.now() % 60000) + 50);
+    };
+    tick();
+
+    // Load settings and apply CSS vars on mount
+    call('settings_get_all').then(applySettings).catch(() => {});
+
+    return () => { offs.forEach((o) => o()); window.removeEventListener('blur', onBlur); clearTimeout(t); };
+  });
+</script>
+
+<svelte:window onkeydown={onKey} />
+
+<main class="stage" style:--accent={ui.accent}>
+
+  <!-- ── progress ring ── lives outside .island so it's never clipped ── -->
+  {#if progress.value >= 0 && !ui.expanded}
+    <svg
+      class="progress-ring"
+      width={svgW} height={svgH}
+      viewBox="0 0 {svgW} {svgH}"
+      aria-hidden="true"
+      in:fade={{ duration: 220 }}
+      out:fade={{ duration: 350 }}
+    >
+      <circle cx={cx} cy={cy} r={ringR} fill="none"
+        stroke="rgba(255,255,255,0.1)" stroke-width={RING_STROKE} />
+      <circle cx={cx} cy={cy} r={ringR} fill="none"
+        stroke={progress.value >= 100 ? '#4ade80' : 'var(--accent)'}
+        stroke-width={RING_STROKE} stroke-linecap="round"
+        stroke-dasharray={circ} stroke-dashoffset={dashOff}
+        transform="rotate(-90 {cx} {cy})"
+        class="arc"
+      />
+    </svg>
+  {/if}
+
+  <div
+    class="island"
+    class:open={ui.expanded}
+    class:charging={progress.charging && !ui.expanded}
+    role="group"
+    aria-label="Isle"
+  >
+    {#if !ui.expanded}
+      <button class="mini" onclick={expand} aria-label="Open Isle" in:fade={{ duration: 160, delay: 220 }}>
+        {#if media.active && media.playing}
+          <span class="art" style:background-image={media.art ? `url(${media.art})` : 'none'}></span>
+          <span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>
+        {:else}
+          <span class="clock">{clock}</span>
+        {/if}
+
+        {#if progress.charging}
+          <span class="bolt" aria-label="Charging" in:fade={{ duration: 180 }} out:fade={{ duration: 150 }}>⚡</span>
+        {:else if progress.battery !== null}
+          <span class="battery-dot" style:background={battColour}
+            title="Battery {Math.round((progress.battery ?? 0) * 100)}%"></span>
+        {/if}
+
+        {#if progress.value >= 0 && progress.label}
+          <span class="prog-label" in:fade={{ duration: 140 }} out:fade={{ duration: 100 }}>{progress.label}</span>
+        {/if}
+
+        <!-- gear icon — opens settings window, visible on pill hover -->
+        <!-- Must be a div, not button, since it's inside the .mini button -->
+        <div class="gear" role="button" tabindex="0"
+          onclick={(e) => { e.stopPropagation(); call('open_settings'); }}
+          onkeydown={(e) => e.key === 'Enter' && call('open_settings')}
+          aria-label="Open Isle Settings" title="Settings"
+        >⚙</div>
+      </button>
+    {:else}
+      <div class="content" in:fade={{ duration: 200, delay: 170 }} out:fade={{ duration: 90 }}>
+        <nav class="tabs" aria-label="Sections" style:--i={index}>
+          <span class="pill" aria-hidden="true"></span>
+          {#each tabs as t}
+            <button class="tab" class:active={ui.tab === t.id} onclick={() => (ui.tab = t.id)}
+              aria-label={t.label} title="{t.label} (Alt+{tabs.indexOf(t) + 1})" aria-current={ui.tab === t.id}>
+              <Icon name={t.icon} />
+            </button>
+          {/each}
+        </nav>
+        <section class="body">
+          {#if ui.tab === 'music'}<Music />
+          {:else if ui.tab === 'clips'}<Clips />
+          {:else if ui.tab === 'tasks'}<Tasks />
+          {:else if ui.tab === 'calendar'}<Calendar />
+          {:else}<Modes />{/if}
+        </section>
+        {#if ui.toast}<div class="toast" in:fade={{ duration: 120 }} out:fade={{ duration: 160 }}>{ui.toast}</div>{/if}
+      </div>
+    {/if}
+  </div>
+</main>
+
+<style>
+  .stage { position: fixed; inset: 0; display: flex; justify-content: var(--setting-pos, center); align-items: flex-start; padding-top: 6px; }
+
+  /* ── progress ring ─────────────────────────────────────────────────── */
+  .progress-ring {
+    position: absolute;
+    /* centred over the pill: stage uses flex + padding-top:6px, island is 38px tall */
+    top: 6px; /* same as stage padding-top */
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+    overflow: visible;
+    z-index: 1;
+  }
+  .arc {
+    transition: stroke-dashoffset .45s cubic-bezier(.4,0,.2,1), stroke .3s ease;
+  }
+
+  /* ── island ────────────────────────────────────────────────────────── */
+  .island {
+    --w: var(--setting-pill-w, 190px); --h: 38px; --r: var(--setting-radius, 19px);
+    position: relative; width: var(--w); height: var(--h); border-radius: var(--r);
+    background: var(--setting-bg, var(--void)); overflow: hidden;
+    opacity: var(--setting-opacity, 1);
+    box-shadow: 0 0 0 1px rgba(255,255,255,.07), 0 3px 10px rgba(0,0,0,.45);
+    border: var(--setting-border, none);
+    transition: width .6s var(--spring), height .6s var(--spring), border-radius .6s var(--spring);
+    z-index: 2;
+  }
+  .island.open     { --w: 440px; --h: 326px; --r: 30px; }
+  .island.charging { --w: 206px; } /* pill stretches when charger plugged */
+
+  /* ── collapsed ─────────────────────────────────────────────────────── */
+  .mini {
+    position: absolute; inset: 0; width: 100%;
+    display: flex; align-items: center; justify-content: center;
+    gap: 0; padding: 0 12px;
+  }
+  .mini:has(.art) { justify-content: space-between; }
+  .clock { font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: .02em; flex: 1; text-align: center; }
+  .art   { width: 24px; height: 24px; border-radius: 50%; background: var(--row-hi) center/cover; flex-shrink: 0; }
+
+  .eq { display: flex; align-items: flex-end; gap: 3px; height: 14px; flex-shrink: 0; }
+  .eq i { width: 3px; height: 14px; border-radius: 2px; background: var(--accent); transform-origin: bottom; animation: eq 0.9s ease-in-out infinite; }
+  .eq i:nth-child(2) { animation-delay: -.3s; } .eq i:nth-child(3) { animation-delay: -.6s; }
+  @keyframes eq { 0%, 100% { transform: scaleY(.25); } 50% { transform: scaleY(1); } }
+
+  /* charging bolt — pure CSS @keyframes, zero JS loop needed.
+     The bolt element is added/removed by Svelte reactivity; CSS handles the animation. */
+  .bolt {
+    font-size: 12px; line-height: 1; flex-shrink: 0; margin-left: 4px;
+    animation: pulse-bolt 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse-bolt {
+    0%, 100% { opacity: .65; transform: scale(1);    }
+    50%       { opacity: 1;   transform: scale(1.18); }
+  }
+
+  /* battery dot */
+  .battery-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+    margin-left: 5px; transition: background .5s ease;
+    box-shadow: 0 0 5px currentColor;
+  }
+
+  /* progress label (appears below clock text, micro-font) */
+  .prog-label {
+    position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%);
+    font-size: 9px; font-weight: 700; letter-spacing: .05em;
+    color: var(--accent); white-space: nowrap; pointer-events: none; opacity: .85;
+  }
+
+  /* gear button — appears on pill hover; absolute so it doesn't shift layout */
+  .gear {
+    position: absolute;
+    right: 6px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: rgba(255,255,255,.45);
+    font-size: 13px; cursor: pointer; padding: 4px;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity .18s, color .18s;
+    line-height: 1;
+  }
+  .mini:hover .gear { opacity: 1; }
+  .gear:hover { color: rgba(255,255,255,.9) !important; background: rgba(255,255,255,.08); }
+
+  /* ── expanded ──────────────────────────────────────────────────────── */
+  .content { position: absolute; top: 0; left: 50%; width: 440px; height: 326px; margin-left: -220px; display: flex; flex-direction: column; }
+  .tabs { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); margin: 12px 16px 0; padding: 3px; background: var(--row); border-radius: 14px; flex: none; }
+  .pill { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 5); border-radius: 11px; background: var(--row-hi);
+    transform: translateX(calc(var(--i) * 100%)); transition: transform .45s var(--spring); }
+  .tab { position: relative; height: 30px; display: grid; place-items: center; color: var(--dim); transition: color .2s; }
+  .tab.active, .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--accent); }
+  .body { flex: 1; min-height: 0; }
+  .toast { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); background: #fff; color: #111; font-weight: 600;
+    padding: 6px 12px; border-radius: 999px; max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+</style>

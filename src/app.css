@@ -1,0 +1,58 @@
+/*
+ * Design tokens + base styles. Look: a true-black pill (it must melt into the
+ * hardware-black feel of an island), warm off-white ink, one accent that
+ * follows the album art (--accent, set from state.svelte.js).
+ * The memorable moment is the spring morph; everything else stays quiet.
+ * Perf rules: animate only transform/opacity, except the single island box
+ * (width/height/radius), which is one small element.
+ */
+:root {
+  --void: #000;
+  --ink: #f2eee6;
+  --dim: #8d8b86;
+  --row: rgba(255, 255, 255, 0.06);
+  --row-hi: rgba(255, 255, 255, 0.11);
+  --accent: rgb(157, 180, 255);
+  /* spring-ish easing with ~4% overshoot; window margins in island.rs leave room for it */
+  --spring: linear(0, 0.18 5%, 0.58 12%, 0.88 19%, 1.03 27%, 1.04 33%, 1.02 40%, 0.995 50%, 1 65%, 1);
+  font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body { color: var(--ink); -webkit-user-select: none; user-select: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+input, select {
+  font: inherit; color: var(--ink); background: var(--row); border: 1px solid transparent;
+  border-radius: 10px; padding: 7px 10px; outline: 0; -webkit-user-select: text; user-select: text; min-width: 0;
+}
+input:focus, select:focus { border-color: var(--accent); }
+input::placeholder { color: var(--dim); }
+select option { background: #151515; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 3px; }
+
+/* shared view pieces */
+.view { height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px 16px 14px; min-height: 0; }
+.scroll { overflow-y: auto; min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; }
+.row { display: flex; align-items: center; gap: 10px; background: var(--row); border-radius: 12px; padding: 8px 10px; transition: background .15s; }
+.row:hover { background: var(--row-hi); }
+.grow { flex: 1; min-width: 0; }
+.clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dim { color: var(--dim); }
+.icon-btn { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; color: var(--dim); transition: color .15s, background .15s; }
+.icon-btn:hover { color: var(--ink); background: var(--row-hi); }
+.icon-btn.on { color: var(--accent); }
+.hover-only { opacity: 0; transition: opacity .15s; }
+.row:hover .hover-only, .row:focus-within .hover-only { opacity: 1; }
+.empty { margin: auto; text-align: center; color: var(--dim); max-width: 280px; line-height: 1.45; }
+.primary { background: var(--accent); color: #0a0a0a; font-weight: 600; border-radius: 10px; padding: 7px 14px; }
+.ghost { color: var(--dim); padding: 6px 8px; border-radius: 8px; }
+.ghost:hover { color: var(--ink); background: var(--row-hi); }
+h3 { margin: 6px 0 2px; font-size: 12px; font-weight: 600; color: var(--dim); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}

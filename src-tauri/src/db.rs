@@ -1,0 +1,93 @@
+//! SQLite storage. Everything the user creates lives in ONE local file:
+//! `%APPDATA%\app.isle.island\isle.db`. Nothing leaves the machine.
+//!
+//! Conventions
+//!  - All timestamps are unix SECONDS (i64), UTC. The UI converts to local time.
+//!  - Column names avoid SQL keywords (`trig`, `starts`, `ends`, `k`, `v`).
+//!  - `modes.actions` / `routines.actions` / `routines.trig` are JSON text. See
+//!    actions.rs for the action schema.
+//!  - Access the connection only through `Db::with` so locking stays in one place.
+//!    NEVER call `Db::with` while already inside another `Db::with` (deadlock).
+
+use rusqlite::{params, Connection};
+use std::sync::Mutex;
+
+pub struct Db(pub Mutex<Connection>);
+
+pub fn e2s<E: ToString>(e: E) -> String {
+    e.to_string()
+}
+
+pub fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS clips(
+  id INTEGER PRIMARY KEY, text TEXT NOT NULL UNIQUE,
+  pinned INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS tasks(
+  id INTEGER PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
+  due INTEGER, created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS events(
+  id INTEGER PRIMARY KEY, title TEXT NOT NULL, starts INTEGER NOT NULL, ends INTEGER,
+  remind_min INTEGER NOT NULL DEFAULT 10, notified INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS events_starts ON events(starts);
+CREATE TABLE IF NOT EXISTS modes(
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, icon TEXT NOT NULL, actions TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS routines(
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, trig TEXT NOT NULL, actions TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0);
+";
+
+impl Db {
+    pub fn open(path: &std::path::Path) -> rusqlite::Result<Self> {
+        let c = Connection::open(path)?;
+        c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+        c.execute_batch(SCHEMA)?;
+        seed(&c)?;
+        Ok(Db(Mutex::new(c)))
+    }
+
+    /// Run a closure with the connection locked. Errors become Strings for the UI.
+    pub fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, String> {
+        let c = self.0.lock().map_err(e2s)?;
+        f(&c).map_err(e2s)
+    }
+
+    pub fn setting(&self, k: &str) -> Option<String> {
+        self.with(|c| c.query_row("SELECT v FROM settings WHERE k=?1", [k], |r| r.get(0)))
+            .ok()
+    }
+
+    pub fn set_setting(&self, k: &str, v: &str) -> Result<(), String> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO settings(k,v) VALUES(?1,?2) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                [k, v],
+            )
+            .map(|_| ())
+        })
+    }
+}
+
+/// First-run defaults so the Modes tab is not empty.
+fn seed(c: &Connection) -> rusqlite::Result<()> {
+    let n: i64 = c.query_row("SELECT COUNT(*) FROM modes", [], |r| r.get(0))?;
+    if n == 0 {
+        for (name, icon, actions) in [
+            ("Focus", "🎯", r#"[{"type":"notify","title":"Focus on","body":"One thing at a time."}]"#),
+            ("Break", "☕", r#"[{"type":"notify","title":"Break time","body":"Step away from the screen."}]"#),
+        ] {
+            c.execute(
+                "INSERT INTO modes(name,icon,actions) VALUES(?1,?2,?3)",
+                params![name, icon, actions],
+            )?;
+        }
+    }
+    Ok(())
+}

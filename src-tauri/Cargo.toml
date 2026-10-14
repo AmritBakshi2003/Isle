@@ -1,0 +1,49 @@
+[package]
+name = "isle"
+version = "0.1.0"
+description = "Isle: a Dynamic-Island-style productivity overlay for Windows"
+edition = "2021"
+
+[lib]
+name = "isle_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = "0.4"
+open = "5"          # open files / apps / URLs with the shell
+wallpaper = "3"     # set desktop wallpaper from a file path
+arboard = "3"       # read/write clipboard text
+base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+clipboard-master = "3.1"   # event-driven clipboard listener (no polling)
+windows = { version = "0.58", features = [
+  "Devices_Power",
+  "System_Power",
+  "Foundation",
+  "Media_Control",
+  "Storage_Streams",
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_DataExchange",
+  "Win32_System_Services",
+  "Win32_Networking_BackgroundIntelligentTransferService",
+] }
+
+# Small, fast, idle-friendly binary.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
