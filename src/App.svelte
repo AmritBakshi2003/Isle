@@ -384,7 +384,7 @@
     position: relative; width: var(--w); height: var(--h); border-radius: var(--r);
     background: var(--setting-bg, var(--void)); overflow: hidden;
     opacity: var(--setting-opacity, 1);
-    box-shadow: 0 0 0 1px rgba(255,255,255,.07), 0 3px 10px rgba(0,0,0,.45);
+    box-shadow: none;
     border: var(--setting-border, none);
     transition: width .6s var(--spring), height .6s var(--spring), border-radius .6s var(--spring);
     z-index: 2;
