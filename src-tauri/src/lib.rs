@@ -159,6 +159,7 @@ pub fn run() {
             commands::progress_push,
             commands::progress_clear,
             commands::battery_get,
+            commands::emit_settings_changed,
             system::auto_hide_get,
             system::auto_hide_set,
             system::hide_fullscreen_get,

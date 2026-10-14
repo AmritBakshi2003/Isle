@@ -56,8 +56,8 @@
     s[key] = value;
     try { 
       await call('setting_set', { key, value: String(value) }); 
-      // Emit event to notify main island to reload settings
-      window.dispatchEvent(new CustomEvent('settings-changed'));
+      // Emit Tauri event to notify main island to reload settings
+      await call('emit_settings_changed');
     } catch {}
     flash();
   }

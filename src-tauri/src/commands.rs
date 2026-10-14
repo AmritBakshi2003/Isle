@@ -18,7 +18,7 @@ use crate::{
 use rusqlite::params;
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
 fn json(s: String) -> Value {
@@ -394,4 +394,11 @@ pub fn battery_get() -> serde_json::Value {
     return json!({ "charging": false, "level": null }); // events handle it
     #[cfg(not(target_os = "windows"))]
     json!({ "charging": false, "level": null })
+}
+
+/// Emit event to notify main island that settings have changed
+#[tauri::command]
+pub fn emit_settings_changed(app: AppHandle) -> Result<(), String> {
+    let _ = app.emit("settings://changed", ());
+    Ok(())
 }

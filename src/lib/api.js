@@ -154,6 +154,7 @@ function mock(cmd, a) {
     case 'hide_fullscreen_set': D.settings.hide_fullscreen = a.enabled; return;
     case 'hide_battery_saver_get': return D.settings.hide_battery_saver ?? false;
     case 'hide_battery_saver_set': D.settings.hide_battery_saver = a.enabled; return;
+    case 'emit_settings_changed': return;
     case 'setting_set': D.settings[a.key] = a.value; return;
     case 'settings_get_all': return { ...D.settings };
     case 'open_settings': console.info('[mock] open_settings — no-op in browser'); return;
