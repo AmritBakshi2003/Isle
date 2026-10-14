@@ -10,6 +10,7 @@
     auto_hide: 'false', auto_hide_time: '30',
     hide_fullscreen: 'true', hide_battery_saver: 'false',
     click_action: 'expand', always_on_top: 'true',
+    blur_on_battery: 'false',
     module_media: 'true', module_calendar: 'true', module_tasks: 'true',
     module_clipboard: 'true', module_system: 'true',
     module_file_progress: 'true', module_download_progress: 'true',
@@ -19,7 +20,7 @@
     progress_app_install: 'true', progress_battery_stretch: 'true',
     progress_ring_style: 'arc', progress_auto_dismiss: '3',
     power_mode: 'balanced', ui_update_rate: '1',
-    blur_on_battery: 'true', hw_acceleration: 'true',
+    hw_acceleration: 'true',
     hotkey_toggle: 'ctrl+alt+space', hotkey_settings: 'ctrl+alt+comma',
     log_level: 'error',
   };
