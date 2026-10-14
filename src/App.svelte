@@ -264,7 +264,18 @@
     // Load settings and apply CSS vars on mount
     call('settings_get_all').then(applySettings).catch(() => {});
 
-    return () => { offs.forEach((o) => o()); window.removeEventListener('blur', onBlur); clearTimeout(t); };
+    // Listen for settings changes from Settings window
+    const onSettingsChanged = () => {
+      call('settings_get_all').then(applySettings).catch(() => {});
+    };
+    window.addEventListener('settings-changed', onSettingsChanged);
+
+    return () => { 
+      offs.forEach((o) => o()); 
+      window.removeEventListener('blur', onBlur); 
+      window.removeEventListener('settings-changed', onSettingsChanged);
+      clearTimeout(t); 
+    };
   });
 </script>
 
