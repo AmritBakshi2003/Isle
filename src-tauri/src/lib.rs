@@ -58,6 +58,9 @@ pub fn run() {
             media::start(handle.clone());
             clipboard::start(handle.clone());
             app.manage(progress::start(handle.clone())); // single-channel progress manager
+            
+            // 5. System state detection (fullscreen, battery saver, idle)
+            system::start(handle.clone());
 
             // 5. Window placement
             island::resize(&handle, false);
@@ -162,6 +165,8 @@ pub fn run() {
             commands::emit_settings_changed,
             system::auto_hide_get,
             system::auto_hide_set,
+            system::auto_hide_time_get,
+            system::auto_hide_time_set,
             system::hide_fullscreen_get,
             system::hide_fullscreen_set,
             system::hide_battery_saver_get,

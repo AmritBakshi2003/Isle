@@ -38,6 +38,7 @@ windows = { version = "0.58", features = [
   "Win32_System_DataExchange",
   "Win32_System_Services",
   "Win32_Networking_BackgroundIntelligentTransferService",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 # Small, fast, idle-friendly binary.

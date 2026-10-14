@@ -251,6 +251,11 @@
       on('settings://changed', () => {
         call('settings_get_all').then(applySettings).catch(() => {});
       }),
+      on('system://hide', (shouldHide) => {
+        if (shouldHide && ui.expanded) {
+          collapse();
+        }
+      }),
     ];
     const onBlur = () => inTauri && collapse();
     window.addEventListener('blur', onBlur);
@@ -440,7 +445,7 @@
   }
 
   /* ── expanded ──────────────────────────────────────────────────────── */
-  .content { position: absolute; top: 0; left: 50%; width: 500px; height: 326px; margin-left: -250px; display: flex; flex-direction: column; }
+  .content { position: absolute; top: 0; left: 50%; width: 500px; height: 326px; margin-left: -250px; display: flex; flex-direction: column; background: transparent; }
   .tabs { position: relative; display: grid; grid-template-columns: repeat(var(--tab-count, 6), 1fr); margin: 12px 16px 0; padding: 3px; background: var(--row); border-radius: 14px; flex: none; }
   .pill { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / var(--tab-count, 6)); border-radius: 11px; background: var(--row-hi);
     transform: translateX(calc(var(--i) * 100%)); transition: transform .45s var(--spring); }
