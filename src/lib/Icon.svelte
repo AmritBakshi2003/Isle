@@ -19,6 +19,7 @@
     play2: '<path d="M7 4.5v15l13-7.5z"/>',
     edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
+    forward: '<path d="M9 5l7 7-7 7"/>',
   };
 </script>
 

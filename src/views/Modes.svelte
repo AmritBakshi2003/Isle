@@ -29,7 +29,20 @@
 
   const fail = (e) => toast(e);
   async function activate(m) {
-    try { await call('mode_activate', { id: m.id }); active = String(m.id); toast(`${m.name} on`); } catch (e) { fail(e); }
+    const isActive = String(m.id) === active;
+    try {
+      if (isActive) {
+        // Deactivate: clear active_mode setting
+        await call('setting_set', { key: 'active_mode', value: '' });
+        active = '';
+        toast(`${m.name} off`);
+      } else {
+        // Activate: run actions and set active_mode
+        await call('mode_activate', { id: m.id });
+        active = String(m.id);
+        toast(`${m.name} on`);
+      }
+    } catch (e) { fail(e); }
   }
   const run = (r) => call('routine_run', { id: r.id }).then(() => toast(`${r.name} ran`)).catch(fail);
   const toggle = async (r) => { await call('routine_toggle', { id: r.id, enabled: !r.enabled }); load(); };
