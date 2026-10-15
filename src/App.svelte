@@ -322,8 +322,12 @@
         }).catch(() => {});
       }),
       on('system://hide', (shouldHide) => {
-        if (shouldHide && ui.expanded) {
-          collapse();
+        if (inTauri) {
+          if (shouldHide) {
+            call('window_hide').catch(() => {});
+          } else {
+            call('window_show').catch(() => {});
+          }
         }
       }),
     ];

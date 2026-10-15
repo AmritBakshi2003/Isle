@@ -357,6 +357,27 @@ pub fn apply_window_settings(app: AppHandle, always_on_top: bool) -> Result<(), 
     Ok(())
 }
 
+/// Hide or show the main island window.
+/// Used by fullscreen/battery saver detection to temporarily hide the pill.
+#[tauri::command]
+pub fn window_hide(app: AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("main") {
+        w.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn window_show(app: AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("main") {
+        w.show().map_err(|e| e.to_string())?;
+        w.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn autostart_get(app: AppHandle) -> bool {
     app.autolaunch().is_enabled().unwrap_or(false)

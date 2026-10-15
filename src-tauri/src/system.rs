@@ -17,6 +17,7 @@ use windows::{
     Win32::UI::Input::KeyboardAndMouse::{
         GetLastInputInfo, LASTINPUTINFO,
     },
+    Win32::System::Power::GetSystemPowerStatus,
 };
 
 /// Global flags for system state
@@ -89,45 +90,82 @@ fn start_fullscreen_watcher(app: AppHandle, state: SystemState) {
 
 #[cfg(target_os = "windows")]
 fn detect_fullscreen() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.is_invalid() {
             return false;
         }
-        
+
+        // Exclude desktop shell windows (Progman, WorkerW)
+        let mut class_buf = [0u16; 256];
+        let len = GetClassNameW(hwnd, &mut class_buf);
+        let class_name = String::from_utf16_lossy(&class_buf[..len as usize]);
+        if class_name == "Progman" || class_name == "WorkerW" {
+            return false;
+        }
+
         let mut rect = std::mem::zeroed();
         if GetWindowRect(hwnd, &mut rect).is_err() {
             return false;
         }
-        
+
         let width = rect.right - rect.left;
         let height = rect.bottom - rect.top;
-        
+
         // Check if window is maximized
         if IsZoomed(hwnd).as_bool() {
             return true;
         }
-        
+
         // Check if window covers the entire screen
         let screen_width = GetSystemMetrics(SM_CXSCREEN);
         let screen_height = GetSystemMetrics(SM_CYSCREEN);
-        
+
         width >= screen_width && height >= screen_height
     }
 }
 
 #[cfg(target_os = "windows")]
-fn start_battery_saver_watcher(_app: AppHandle, _state: SystemState) {
-    // Battery saver detection - simplified polling version
-    // Full implementation would use RegisterPowerSettingNotification
+fn start_battery_saver_watcher(app: AppHandle, state: SystemState) {
     std::thread::spawn(move || {
+        // For now, use polling as a simpler approach
+        // Full event-driven implementation would require window handle and complex notification handling
         loop {
-            // For now, this is a placeholder - actual battery saver detection
-            // requires more complex Windows Power API integration
-            // TODO: Implement actual battery saver detection via Power Management API
+            // Simple check via Windows Power Management API
+            let battery_saver_enabled = detect_battery_saver();
+            let was_enabled = state.is_battery_saver.load(Ordering::Relaxed);
+
+            if battery_saver_enabled != was_enabled {
+                state.is_battery_saver.store(battery_saver_enabled, Ordering::Relaxed);
+
+                let db_handle = app.state::<Db>();
+                let hide_battery_enabled = db_handle.setting("hide_battery_saver")
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+
+                if hide_battery_enabled {
+                    check_hide_condition(&state, &app);
+                }
+            }
+
             std::thread::sleep(Duration::from_secs(5));
         }
     });
+}
+
+#[cfg(target_os = "windows")]
+fn detect_battery_saver() -> bool {
+    unsafe {
+        let mut status = std::mem::zeroed();
+        if GetSystemPowerStatus(&mut status).is_ok() {
+            // Battery saver is indicated by the BatteryFlag
+            // This is a simplified heuristic - may need refinement
+            return status.BatteryFlag != 0;
+        }
+    }
+    false
 }
 
 #[cfg(target_os = "windows")]
@@ -139,35 +177,35 @@ fn start_idle_watcher(app: AppHandle, state: SystemState) {
             let auto_hide_enabled = db_handle.setting("auto_hide")
                 .map(|v| v == "true")
                 .unwrap_or(false);
-            
+
             if auto_hide_enabled {
                 // Get idle threshold from DB
                 let idle_threshold = db_handle.setting("auto_hide_time")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(30);
-                
+
                 // Check idle time using GetLastInputInfo
                 unsafe {
                     let mut last_input = LASTINPUTINFO {
                         cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
                         dwTime: 0,
                     };
-                    
+
                     if GetLastInputInfo(&mut last_input).as_bool() {
                         let idle_ms = get_tick_count() - last_input.dwTime;
                         let idle_seconds = idle_ms / 1000;
-                        
-                        if idle_seconds > idle_threshold {
-                            state.should_hide.store(true, Ordering::Relaxed);
-                            check_hide_condition(&state, &app);
-                        } else {
-                            state.should_hide.store(false, Ordering::Relaxed);
+
+                        let was_should_hide = state.should_hide.load(Ordering::Relaxed);
+                        let should_hide = idle_seconds > idle_threshold;
+
+                        if should_hide != was_should_hide {
+                            state.should_hide.store(should_hide, Ordering::Relaxed);
                             check_hide_condition(&state, &app);
                         }
                     }
                 }
             }
-            
+
             std::thread::sleep(Duration::from_secs(1));
         }
     });

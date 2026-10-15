@@ -162,6 +162,8 @@ pub fn run() {
             commands::settings_get_all,
             commands::open_settings,
             commands::apply_window_settings,
+            commands::window_hide,
+            commands::window_show,
             commands::autostart_get,
             commands::autostart_set,
             commands::progress_push,
