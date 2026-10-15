@@ -284,23 +284,7 @@
       on('media://update', applyMedia),
       on('island://toggle', toggle),
       on('progress://update', ({ value, label }) => {
-        // Filter based on progress type settings
-        const labelLower = (label ?? '').toLowerCase();
-        let shouldShow = true;
-
-        if (labelLower.includes('download') && moduleSettings.progress_download !== 'true') {
-          shouldShow = false;
-        }
-        if (labelLower.includes('install') && moduleSettings.progress_app_install !== 'true') {
-          shouldShow = false;
-        }
-        if (labelLower.includes('copy') && moduleSettings.progress_file_copy !== 'true') {
-          shouldShow = false;
-        }
-
-        if (shouldShow) {
-          setProgress(value, label ?? '');
-        }
+        setProgress(value, label ?? '');
       }),
       on('progress://clear',  ()                 => clearProgress()),
       on('battery://update',  ({ charging, level }) => {
