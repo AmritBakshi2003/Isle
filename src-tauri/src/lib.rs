@@ -26,7 +26,7 @@ mod system;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Emitter, Manager,
+    Manager,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -70,14 +70,14 @@ pub fn run() {
             // 5. Window placement
             island::resize(&handle, false);
 
-            // 6. Register toggle hotkey (non-fatal — conflict just logs a warning)
-            island::register_hotkey(&handle);
-
-            // 7. Register settings hotkey from DB (default: ctrl+alt+comma)
+            // 6. Register hotkeys from DB (non-fatal — conflict just logs a warning)
             {
                 let db = app.state::<db::Db>();
+                let toggle_hk = db.setting("hotkey_toggle")
+                    .unwrap_or_else(|| "ctrl+alt+space".to_string());
                 let settings_hk = db.setting("hotkey_settings")
                     .unwrap_or_else(|| "ctrl+alt+comma".to_string());
+                island::register_hotkey(&handle, &toggle_hk);
                 island::register_settings_hotkey(&handle, &settings_hk);
             }
 
@@ -111,7 +111,6 @@ pub fn run() {
                                 let _ = w.set_focus();
                             }
                         }
-                        let _ = app.emit("island://toggle", ());
                     }
                     "settings" => {
                         island::show_settings(app);

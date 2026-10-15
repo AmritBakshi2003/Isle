@@ -432,14 +432,14 @@ pub fn emit_settings_changed(app: AppHandle) -> Result<(), String> {
 /// Re-register hotkeys after they've been changed in settings
 #[tauri::command]
 pub fn reregister_hotkeys(app: AppHandle, db: State<Db>) -> Result<(), String> {
-    let _toggle_hk = db.setting("hotkey_toggle").unwrap_or_else(|| "ctrl+alt+space".to_string());
+    let toggle_hk = db.setting("hotkey_toggle").unwrap_or_else(|| "ctrl+alt+space".to_string());
     let settings_hk = db.setting("hotkey_settings").unwrap_or_else(|| "ctrl+alt+comma".to_string());
 
     // Unregister existing hotkeys first
     let _ = app.global_shortcut().unregister_all();
 
     // Re-register with new values
-    island::register_hotkey(&app);
+    island::register_hotkey(&app, &toggle_hk);
     island::register_settings_hotkey(&app, &settings_hk);
 
     Ok(())
