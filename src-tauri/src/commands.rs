@@ -374,7 +374,8 @@ pub fn window_show(app: AppHandle) -> Result<(), String> {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("main") {
         w.show().map_err(|e| e.to_string())?;
-        w.set_focus().map_err(|e| e.to_string())?;
+        // Do NOT set_focus() - this prevents stealing keyboard focus
+        // Only hotkey and tray should focus the pill
     }
     Ok(())
 }
