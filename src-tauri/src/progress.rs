@@ -13,7 +13,7 @@
 
 use serde_json::json;
 use std::sync::mpsc::{sync_channel, SyncSender};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 // -- message ------------------------------------------------------------------
 
@@ -46,8 +46,8 @@ pub fn start(app: AppHandle) -> ProgressHandle {
     #[cfg(target_os = "windows")]
     {
         start_battery_watcher(app.clone(), tx.clone());
-        start_bits_watcher(tx.clone());
-        start_install_watcher(tx.clone());
+        start_bits_watcher(app.clone(), tx.clone());
+        start_install_watcher(app.clone(), tx.clone());
     }
 
     // Single consumer thread: emits all Tauri events.
@@ -124,7 +124,7 @@ fn start_battery_watcher(_app: AppHandle, tx: SyncSender<Msg>) {
 
 // BITS: poll every 5s while active, 15s when idle.
 #[cfg(target_os = "windows")]
-fn start_bits_watcher(tx: SyncSender<Msg>) {
+fn start_bits_watcher(app: AppHandle, tx: SyncSender<Msg>) {
     use std::time::Duration;
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
@@ -136,7 +136,14 @@ fn start_bits_watcher(tx: SyncSender<Msg>) {
             match poll_bits() {
                 Ok((v, label)) if v >= 0 => {
                     was_active = true;
-                    let _ = tx.try_send(Msg::Progress { value: v, label });
+                    // Check if download progress is enabled
+                    let enabled = app.try_state::<crate::db::Db>()
+                        .and_then(|db| db.setting("progress_download"))
+                        .map(|s| s == "true")
+                        .unwrap_or(true);
+                    if enabled {
+                        let _ = tx.try_send(Msg::Progress { value: v, label });
+                    }
                     std::thread::sleep(Duration::from_secs(5));
                 }
                 _ => {
@@ -201,7 +208,7 @@ fn poll_bits() -> windows::core::Result<(i64, String)> {
 
 // App install: watch Windows Installer service. 3s idle poll, 2s active poll.
 #[cfg(target_os = "windows")]
-fn start_install_watcher(tx: SyncSender<Msg>) {
+fn start_install_watcher(app: AppHandle, tx: SyncSender<Msg>) {
     use std::time::Duration;
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
@@ -211,6 +218,20 @@ fn start_install_watcher(tx: SyncSender<Msg>) {
         loop {
             std::thread::sleep(Duration::from_secs(3));
             if !msiserver_running() { continue; }
+
+            // Check if install progress is enabled
+            let enabled = app.try_state::<crate::db::Db>()
+                .and_then(|db| db.setting("progress_app_install"))
+                .map(|s| s == "true")
+                .unwrap_or(true);
+
+            if !enabled {
+                // Still need to wait for msiserver to stop to avoid rapid polling
+                while msiserver_running() {
+                    std::thread::sleep(Duration::from_secs(2));
+                }
+                continue;
+            }
 
             let _ = tx.try_send(Msg::Progress { value: 20, label: "Installing...".into() });
 

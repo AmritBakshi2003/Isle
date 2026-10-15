@@ -69,6 +69,12 @@
       if (key === 'log_level') {
         await call('reload_logger');
       }
+
+      // Enable/disable clipboard module
+      if (key === 'module_clipboard') {
+        await call('clipboard_enabled_set', value === 'true');
+      }
+
       flash();
     } catch (e) {
       console.error('Failed to save setting:', key, e);

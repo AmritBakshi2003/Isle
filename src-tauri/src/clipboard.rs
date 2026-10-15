@@ -16,6 +16,18 @@ pub fn start(app: AppHandle) {
     imp::start(app)
 }
 
+pub fn stop() {
+    imp::stop()
+}
+
+pub fn set_enabled(enabled: bool) {
+    imp::set_enabled(enabled)
+}
+
+pub fn is_enabled() -> bool {
+    imp::is_enabled()
+}
+
 #[cfg(windows)]
 mod imp {
     use crate::db::{now, Db};
@@ -25,6 +37,9 @@ mod imp {
         core::w,
         Win32::System::DataExchange::{IsClipboardFormatAvailable, RegisterClipboardFormatW},
     };
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static CLIPBOARD_ENABLED: AtomicBool = AtomicBool::new(true);
 
     struct Handler {
         app: AppHandle,
@@ -32,7 +47,9 @@ mod imp {
 
     impl ClipboardHandler for Handler {
         fn on_clipboard_change(&mut self) -> CallbackResult {
-            capture(&self.app);
+            if CLIPBOARD_ENABLED.load(Ordering::Relaxed) {
+                capture(&self.app);
+            }
             CallbackResult::Next
         }
         fn on_clipboard_error(&mut self, _e: std::io::Error) -> CallbackResult {
@@ -44,6 +61,18 @@ mod imp {
         std::thread::spawn(move || {
             let _ = Master::new(Handler { app }).run();
         });
+    }
+
+    pub fn stop() {
+        CLIPBOARD_ENABLED.store(false, Ordering::Relaxed);
+    }
+
+    pub fn is_enabled() -> bool {
+        CLIPBOARD_ENABLED.load(Ordering::Relaxed)
+    }
+
+    pub fn set_enabled(enabled: bool) {
+        CLIPBOARD_ENABLED.store(enabled, Ordering::Relaxed);
     }
 
     fn excluded() -> bool {

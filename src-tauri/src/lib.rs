@@ -61,6 +61,15 @@ pub fn run() {
             clipboard::start(handle.clone());
             app.manage(progress::start(handle.clone())); // single-channel progress manager
 
+            // Check clipboard module setting
+            {
+                let db = app.state::<db::Db>();
+                let clipboard_enabled = db.setting("module_clipboard")
+                    .map(|v| v == "true")
+                    .unwrap_or(true);
+                clipboard::set_enabled(clipboard_enabled);
+            }
+
             // 5. System state detection (fullscreen, battery saver, idle)
             system::start(handle.clone());
 
@@ -179,6 +188,8 @@ pub fn run() {
             system::hide_battery_saver_set,
             commands::reregister_hotkeys,
             commands::reload_logger,
+            commands::clipboard_enabled_get,
+            commands::clipboard_enabled_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Isle");

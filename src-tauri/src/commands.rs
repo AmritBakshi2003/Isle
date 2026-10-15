@@ -11,6 +11,7 @@
 
 use crate::{
     actions,
+    clipboard,
     db::{e2s, now, Db},
     island,
     logger,
@@ -450,4 +451,16 @@ pub fn reregister_hotkeys(app: AppHandle, db: State<Db>) -> Result<(), String> {
 pub fn reload_logger(app: AppHandle) -> Result<(), String> {
     logger::init_from_db(&app);
     Ok(())
+}
+
+/// Check if clipboard module is enabled
+#[tauri::command]
+pub fn clipboard_enabled_get() -> bool {
+    clipboard::is_enabled()
+}
+
+/// Enable or disable clipboard module
+#[tauri::command]
+pub fn clipboard_enabled_set(enabled: bool) {
+    clipboard::set_enabled(enabled);
 }
