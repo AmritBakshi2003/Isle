@@ -74,7 +74,7 @@
   const DEFAULT_SETTINGS = {
     corner_radius: '22',
     opacity: '95',
-    bg_color: 'rgba(26, 26, 26, 0)',
+    bg_color: 'rgba(26, 26, 26, 0.95)',
     bg_blur: 'auto',
     border_on: 'false',
     border_color: '#6c6c6c',
@@ -100,6 +100,17 @@
 
   function applySettings(s) {
     if (!s) return;
+    
+    // Fix: if bg_color is fully transparent (alpha 0), use default instead
+    if (s.bg_color && s.bg_color.includes(', 0)')) {
+      s.bg_color = DEFAULT_SETTINGS.bg_color;
+    }
+    
+    // Fix: if opacity is 0, use default instead
+    if (s.opacity && Number(s.opacity) === 0) {
+      s.opacity = DEFAULT_SETTINGS.opacity;
+    }
+    
     // Merge with defaults for missing keys
     const settings = { ...DEFAULT_SETTINGS, ...s };
     

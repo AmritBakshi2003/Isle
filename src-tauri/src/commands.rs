@@ -37,14 +37,15 @@ pub struct Task {
     title: String,
     done: bool,
     due: Option<i64>,
+    remind_min: i64,
 }
 
 #[tauri::command]
 pub fn task_list(db: State<Db>) -> Result<Vec<Task>, String> {
     db.with(|c| {
-        let mut s = c.prepare("SELECT id,title,done,due FROM tasks ORDER BY done, due IS NULL, due, id DESC")?;
+        let mut s = c.prepare("SELECT id,title,done,due,remind_min FROM tasks ORDER BY done, due IS NULL, due, id DESC")?;
         let rows = s.query_map([], |r| {
-            Ok(Task { id: r.get(0)?, title: r.get(1)?, done: r.get::<_, i64>(2)? != 0, due: r.get(3)? })
+            Ok(Task { id: r.get(0)?, title: r.get(1)?, done: r.get::<_, i64>(2)? != 0, due: r.get(3)?, remind_min: r.get(4)? })
         })?;
         rows.collect()
     })
@@ -67,13 +68,50 @@ pub fn task_toggle(db: State<Db>, id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn task_delete(db: State<Db>, id: i64) -> Result<(), String> {
-    db.with(|c| c.execute("DELETE FROM tasks WHERE id=?1", [id]).map(|_| ()))
+pub fn task_delete(db: State<Db>, sched: State<Scheduler>, id: i64) -> Result<(), String> {
+    db.with(|c| c.execute("DELETE FROM tasks WHERE id=?1", [id]).map(|_| ()))?;
+    sched.wake();
+    Ok(())
 }
 
 #[tauri::command]
 pub fn task_clear_done(db: State<Db>) -> Result<(), String> {
     db.with(|c| c.execute("DELETE FROM tasks WHERE done=1", []).map(|_| ()))
+}
+
+/// Add a task with an optional reminder. If remind_min > 0, the scheduler will fire a toast.
+#[tauri::command]
+pub fn task_add_with_reminder(
+    db: State<Db>,
+    sched: State<Scheduler>,
+    title: String,
+    due: Option<i64>,
+    remind_min: i64,
+) -> Result<i64, String> {
+    let id = db.with(|c| {
+        c.execute(
+            "INSERT INTO tasks(title,due,created,remind_min) VALUES(?1,?2,?3,?4)",
+            params![title.trim(), due, now(), remind_min],
+        )?;
+        Ok(c.last_insert_rowid())
+    })?;
+    
+    // Wake the scheduler so it recalculates next wake time for task reminders
+    if due.is_some() && remind_min > 0 {
+        sched.wake();
+    }
+    
+    Ok(id)
+}
+
+/// Cancel a task's reminder by setting remind_min to 0.
+#[tauri::command]
+pub fn task_cancel_reminder(db: State<Db>, sched: State<Scheduler>, id: i64) -> Result<(), String> {
+    db.with(|c| {
+        c.execute("UPDATE tasks SET remind_min=0 WHERE id=?1", [id])
+    })?;
+    sched.wake();
+    Ok(())
 }
 
 // --------------------------------------------------------------- events
@@ -221,11 +259,21 @@ pub fn mode_delete(db: State<Db>, id: i64) -> Result<(), String> {
 }
 
 /// Run a mode's actions and remember it as the active mode (`active_mode` setting).
+/// If deactivating (id matches current active mode), just clear the active mode.
 #[tauri::command]
-pub async fn mode_activate(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), String> {
-    let a: String = db.with(|c| c.query_row("SELECT actions FROM modes WHERE id=?1", [id], |r| r.get(0)))?;
-    db.set_setting("active_mode", &id.to_string())?;
-    actions::run(&app, &json(a))
+pub fn mode_activate(app: AppHandle, db: State<Db>, id: i64) -> Result<(), String> {
+    let current_mode = db.setting("active_mode");
+    let is_deactivating = current_mode.as_deref() == Some(&id.to_string());
+    
+    if is_deactivating {
+        db.set_setting("active_mode", "")?;
+    } else {
+        let a: String = db.with(|c| c.query_row("SELECT actions FROM modes WHERE id=?1", [id], |r| r.get(0)))?;
+        db.set_setting("active_mode", &id.to_string())?;
+        actions::run(&app, &json(a))?;
+    }
+    
+    Ok(())
 }
 
 // ------------------------------------------------------------- routines

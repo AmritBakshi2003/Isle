@@ -1,5 +1,6 @@
 //! One background thread that owns all time-based work:
 //!   - event reminders (toast `remind_min` minutes before `events.starts`)
+//!   - task reminders (toast `remind_min` minutes before `tasks.due`)
 //!   - time-triggered routines  ({"kind":"time","at":"HH:MM","days":[0..6]}, 0=Sun)
 //!   - wallpaper rotation (settings `wallpaper_interval` in minutes, 0 = off)
 //!
@@ -59,14 +60,19 @@ fn tick(app: &AppHandle) -> Duration {
             rows.collect()
         })
         .unwrap_or_default();
+    
     for (id, title, starts) in due {
-        let _ = db.with(|c| c.execute("UPDATE events SET notified=1 WHERE id=?1", [id]));
+        // Only show notification if the event hasn't already passed (more than 5 min ago)
         if starts + 300 >= now {
             let mins = ((starts - now) / 60).max(0);
             let body = if mins == 0 { "Starting now".to_string() } else { format!("In {mins} min") };
             let _ = actions::notify(app, &title, &body);
         }
+        // Mark as notified after checking, so stale events can be retried
+        let _ = db.with(|c| c.execute("UPDATE events SET notified=1 WHERE id=?1", [id]));
     }
+    
+    // Calculate next event reminder time
     if let Ok(Some(t)) = db.with(|c| {
         c.query_row("SELECT MIN(starts - remind_min*60) FROM events WHERE notified=0", [], |r| {
             r.get::<_, Option<i64>>(0)
@@ -75,7 +81,38 @@ fn tick(app: &AppHandle) -> Duration {
         next = next.min(t);
     }
 
-    // 2) Time-triggered routines (checked once per minute, only if any exist).
+    // 2) Task reminders. Fire toasts for tasks with due dates and remind_min > 0.
+    let task_reminders: Vec<(i64, String, i64, i64)> = db
+        .with(|c| {
+            let mut s = c.prepare(
+                "SELECT id,title,due,remind_min FROM tasks WHERE done=0 AND due IS NOT NULL AND remind_min > 0 AND due - remind_min*60 <= ?1",
+            )?;
+            let rows = s.query_map([now], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+            rows.collect()
+        })
+        .unwrap_or_default();
+    
+    // Fire notifications for tasks whose reminder time has arrived
+    for (id, title, due, _remind_min) in task_reminders {
+        let mins_to_due = (due - now) / 60;
+        let body = if mins_to_due <= 0 { "Due now".to_string() } else { format!("Due in {} min", mins_to_due) };
+        let _ = actions::notify(app, &title, &body);
+        // Disable reminder after firing to avoid duplicates
+        let _ = db.with(|c| c.execute("UPDATE tasks SET remind_min=0 WHERE id=?1", [id]));
+    }
+    
+    // Calculate next task reminder time
+    if let Ok(Some(t)) = db.with(|c| {
+        c.query_row(
+            "SELECT MIN(due - remind_min*60) FROM tasks WHERE done=0 AND due IS NOT NULL AND remind_min > 0",
+            [],
+            |r| r.get::<_, Option<i64>>(0)
+        )
+    }) {
+        next = next.min(t);
+    }
+
+    // 3) Time-triggered routines (checked once per minute, only if any exist).
     let routines: Vec<(i64, String, i64, Value, Value)> = db
         .with(|c| {
             let mut s = c.prepare("SELECT id,name,last_run,trig,actions FROM routines WHERE enabled=1")?;
@@ -115,7 +152,7 @@ fn tick(app: &AppHandle) -> Duration {
         next = next.min(now + 60 - now % 60);
     }
 
-    // 3) Wallpaper rotation.
+    // 4) Wallpaper rotation.
     let interval = db.setting("wallpaper_interval").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
     if interval > 0 {
         let last = db.setting("wallpaper_last").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);

@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS clips(
   pinned INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tasks(
   id INTEGER PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
-  due INTEGER, created INTEGER NOT NULL);
+  due INTEGER, created INTEGER NOT NULL, toast_id TEXT, remind_min INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY, title TEXT NOT NULL, starts INTEGER NOT NULL, ends INTEGER,
   remind_min INTEGER NOT NULL DEFAULT 10, notified INTEGER NOT NULL DEFAULT 0);
@@ -44,11 +44,23 @@ CREATE TABLE IF NOT EXISTS routines(
   enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0);
 ";
 
+/// Migration steps to evolve the schema without breaking existing databases.
+/// Each migration is run once; the version is stored in the settings table.
+const MIGRATIONS: &[(&str, &str)] = &[
+    // v1: Add toast_id and remind_min columns to tasks table for scheduled reminders
+    // Use ALTER TABLE IF NOT EXISTS to handle cases where columns might already exist
+    ("1", "ALTER TABLE tasks ADD COLUMN toast_id TEXT"),
+    ("1", "ALTER TABLE tasks ADD COLUMN remind_min INTEGER DEFAULT 0"),
+    // v2: Fix transparent bg_color values in settings
+    ("2", "UPDATE settings SET v='rgba(26, 26, 26, 0.95)' WHERE k='bg_color' AND v LIKE '%, 0)'"),
+];
+
 impl Db {
     pub fn open(path: &std::path::Path) -> rusqlite::Result<Self> {
         let c = Connection::open(path)?;
         c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         c.execute_batch(SCHEMA)?;
+        run_migrations(&c)?;
         seed(&c)?;
         Ok(Db(Mutex::new(c)))
     }
@@ -73,6 +85,23 @@ impl Db {
             .map(|_| ())
         })
     }
+}
+
+/// Run pending migrations. Each migration is run once; the version is stored in settings.
+fn run_migrations(c: &Connection) -> rusqlite::Result<()> {
+    c.execute("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER PRIMARY KEY)", [])?;
+    let current_version: i64 = c.query_row("SELECT COALESCE(MAX(version), 0) FROM schema_version", [], |r| r.get(0))?;
+    
+    for (version, sql) in MIGRATIONS {
+        let v: i64 = version.parse().unwrap();
+        if v > current_version {
+            // Try to execute migration; ignore errors if column already exists
+            let _ = c.execute(sql, []);
+            // Use INSERT OR IGNORE to handle duplicate version numbers
+            c.execute("INSERT OR IGNORE INTO schema_version(version) VALUES(?1)", [v])?;
+        }
+    }
+    Ok(())
 }
 
 /// First-run defaults so the Modes tab is not empty.

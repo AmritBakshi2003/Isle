@@ -9,7 +9,7 @@
 //!   {"type":"wallpaper_next"}                       next image in the wallpaper folder
 //!   {"type":"notify","title":"..","body":".."}      native Windows toast
 //!   {"type":"media","cmd":"play_pause|next|prev"}
-//! TODO(agents): set_volume (IAudioEndpointVolume), do-not-disturb, window layouts.
+//! TODO(agents): set_volume (IAudioEndpointVolume), window layouts, dnd, night_light, battery_saver.
 
 use crate::db::{e2s, now, Db};
 use serde_json::Value;

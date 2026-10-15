@@ -142,6 +142,8 @@ pub fn run() {
             media::media_control,
             commands::task_list,
             commands::task_add,
+            commands::task_add_with_reminder,
+            commands::task_cancel_reminder,
             commands::task_toggle,
             commands::task_delete,
             commands::task_clear_done,

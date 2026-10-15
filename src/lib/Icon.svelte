@@ -27,6 +27,7 @@
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    'bell-off': '<path d="M10 7v9a4 4 0 0 0 8 0v-9"/><path d="M4 7a4 4 0 0 1 8 0"/><path d="M2 2l20 20" stroke-width="2"/>',
     play2: '<path d="M7 4.5v15l13-7.5z"/>',
     edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
