@@ -14,7 +14,7 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-pub const COLLAPSED: (f64, f64) = (200.0, 46.0);
+pub const COLLAPSED: (f64, f64) = (210.0, 46.0);
 pub const EXPANDED:  (f64, f64) = (500.0, 352.0);
 
 // ── single-instance guard ────────────────────────────────────────────────────

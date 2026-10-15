@@ -130,8 +130,8 @@
     root.style.setProperty('--setting-blur', settings.bg_blur || 'auto');
 
     // pill size → collapsed pill width CSS var
-    const sizeMap = { small: '160px', medium: '190px', large: '230px' };
-    root.style.setProperty('--setting-pill-w', sizeMap[settings.pill_size] || '190px');
+    const sizeMap = { small: '170px', medium: '200px', large: '240px' };
+    root.style.setProperty('--setting-pill-w', sizeMap[settings.pill_size] || '200px');
 
     // pill position → stage justify-content CSS var
     const posMap = { left: 'flex-start', center: 'center', right: 'flex-end' };
@@ -476,7 +476,7 @@
 
   /* ── island ────────────────────────────────────────────────────────── */
   .island {
-    --w: var(--setting-pill-w, 190px); --h: 38px; --r: var(--setting-radius, 19px);
+    --w: var(--setting-pill-w, 200px); --h: 38px; --r: var(--setting-radius, 19px);
     position: relative; width: var(--w); height: var(--h); border-radius: var(--r);
     background: var(--setting-bg, transparent); overflow: hidden;
     opacity: var(--setting-opacity, 1);
