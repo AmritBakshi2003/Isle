@@ -72,7 +72,7 @@ pub fn run() {
             }
 
             // 5. System state detection (fullscreen, battery saver, idle)
-            system::start(handle.clone());
+            app.manage(system::start(handle.clone()));
 
             // Initialize logger from DB settings (after DB is managed)
             logger::init_from_db(&handle);
@@ -187,6 +187,7 @@ pub fn run() {
             system::hide_fullscreen_set,
             system::hide_battery_saver_get,
             system::hide_battery_saver_set,
+            system::update_hide_settings,
             commands::reregister_hotkeys,
             commands::reload_logger,
             commands::clipboard_enabled_get,

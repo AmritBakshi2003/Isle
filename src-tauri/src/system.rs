@@ -27,6 +27,10 @@ pub struct SystemState {
     pub is_battery_saver: Arc<AtomicBool>,
     pub auto_hide_idle: Arc<AtomicBool>,
     pub should_hide: Arc<AtomicBool>,
+    // Cached settings for hide conditions
+    pub hide_fullscreen: Arc<AtomicBool>,
+    pub hide_battery_saver: Arc<AtomicBool>,
+    pub auto_hide: Arc<AtomicBool>,
 }
 
 impl SystemState {
@@ -36,30 +40,37 @@ impl SystemState {
             is_battery_saver: Arc::new(AtomicBool::new(false)),
             auto_hide_idle: Arc::new(AtomicBool::new(false)),
             should_hide: Arc::new(AtomicBool::new(false)),
+            hide_fullscreen: Arc::new(AtomicBool::new(true)),
+            hide_battery_saver: Arc::new(AtomicBool::new(false)),
+            auto_hide: Arc::new(AtomicBool::new(false)),
         }
     }
 }
 
-pub fn start(app: AppHandle) {
+pub fn start(app: AppHandle) -> SystemState {
     let state = SystemState::new();
-    
+
     #[cfg(target_os = "windows")]
     {
+        // Initialize hide settings from DB
+        update_cached_settings(&state, &app);
+
         // Start fullscreen detection (polling every 1s)
         start_fullscreen_watcher(app.clone(), state.clone());
-        
+
         // Start battery saver detection (via Windows Power API)
         start_battery_saver_watcher(app.clone(), state.clone());
-        
+
         // Start idle detection (polling based on mouse/keyboard activity)
-        start_idle_watcher(app.clone(), state);
+        start_idle_watcher(app.clone(), state.clone());
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         let _ = app;
-        let _ = state;
     }
+
+    state
 }
 
 #[cfg(target_os = "windows")]
@@ -68,21 +79,12 @@ fn start_fullscreen_watcher(app: AppHandle, state: SystemState) {
         loop {
             let is_fullscreen = detect_fullscreen();
             let was_fullscreen = state.is_fullscreen.load(Ordering::Relaxed);
-            
+
             if is_fullscreen != was_fullscreen {
                 state.is_fullscreen.store(is_fullscreen, Ordering::Relaxed);
-                
-                // Only emit if hide on fullscreen is enabled
-                let db_handle = app.state::<Db>();
-                let hide_fullscreen_enabled = db_handle.setting("hide_fullscreen")
-                    .map(|v| v == "true")
-                    .unwrap_or(true);
-                
-                if hide_fullscreen_enabled {
-                    check_hide_condition(&state, &app);
-                }
+                check_hide_condition(&state, &app);
             }
-            
+
             std::thread::sleep(Duration::from_secs(1));
         }
     });
@@ -139,15 +141,7 @@ fn start_battery_saver_watcher(app: AppHandle, state: SystemState) {
 
             if battery_saver_enabled != was_enabled {
                 state.is_battery_saver.store(battery_saver_enabled, Ordering::Relaxed);
-
-                let db_handle = app.state::<Db>();
-                let hide_battery_enabled = db_handle.setting("hide_battery_saver")
-                    .map(|v| v == "true")
-                    .unwrap_or(false);
-
-                if hide_battery_enabled {
-                    check_hide_condition(&state, &app);
-                }
+                check_hide_condition(&state, &app);
             }
 
             std::thread::sleep(Duration::from_secs(5));
@@ -160,9 +154,8 @@ fn detect_battery_saver() -> bool {
     unsafe {
         let mut status = std::mem::zeroed();
         if GetSystemPowerStatus(&mut status).is_ok() {
-            // Battery saver is indicated by the BatteryFlag
-            // This is a simplified heuristic - may need refinement
-            return status.BatteryFlag != 0;
+            // SystemStatusFlag bit 0 indicates battery saver is on
+            return (status.SystemStatusFlag & 1) == 1;
         }
     }
     false
@@ -222,11 +215,51 @@ fn get_tick_count() -> u32 {
 
 #[cfg(target_os = "windows")]
 fn check_hide_condition(state: &SystemState, app: &AppHandle) {
-    let should_hide = state.is_fullscreen.load(Ordering::Relaxed) 
-        || state.is_battery_saver.load(Ordering::Relaxed)
-        || state.should_hide.load(Ordering::Relaxed);
-    
+    let hide_fullscreen = state.hide_fullscreen.load(Ordering::Relaxed);
+    let hide_battery_saver = state.hide_battery_saver.load(Ordering::Relaxed);
+    let auto_hide = state.auto_hide.load(Ordering::Relaxed);
+
+    let is_fullscreen = state.is_fullscreen.load(Ordering::Relaxed);
+    let is_battery_saver = state.is_battery_saver.load(Ordering::Relaxed);
+    let should_hide_idle = state.should_hide.load(Ordering::Relaxed);
+
+    let should_hide = (is_fullscreen && hide_fullscreen)
+        || (is_battery_saver && hide_battery_saver)
+        || (should_hide_idle && auto_hide);
+
     let _ = app.emit("system://hide", should_hide);
+}
+
+/// Update cached hide settings from DB and recompute hide condition
+#[tauri::command]
+pub fn update_hide_settings(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(state) = app.try_state::<SystemState>() {
+            update_cached_settings(&state, &app);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn update_cached_settings(state: &SystemState, app: &AppHandle) {
+    let db = app.state::<Db>();
+    let hide_fullscreen = db.setting("hide_fullscreen")
+        .map(|v| v == "true")
+        .unwrap_or(true);
+    let hide_battery_saver = db.setting("hide_battery_saver")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let auto_hide = db.setting("auto_hide")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    state.hide_fullscreen.store(hide_fullscreen, Ordering::Relaxed);
+    state.hide_battery_saver.store(hide_battery_saver, Ordering::Relaxed);
+    state.auto_hide.store(auto_hide, Ordering::Relaxed);
+
+    check_hide_condition(state, app);
 }
 
 // ------------------ Commands for Settings UI ------------------
@@ -239,8 +272,15 @@ pub fn auto_hide_get(db: State<Db>) -> bool {
 
 /// Set auto-hide when idle setting
 #[tauri::command]
-pub fn auto_hide_set(db: State<Db>, enabled: bool) -> Result<(), String> {
-    db.set_setting("auto_hide", if enabled { "true" } else { "false" })
+pub fn auto_hide_set(db: State<Db>, app: AppHandle, enabled: bool) -> Result<(), String> {
+    db.set_setting("auto_hide", if enabled { "true" } else { "false" })?;
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(state) = app.try_state::<SystemState>() {
+            update_cached_settings(&state, &app);
+        }
+    }
+    Ok(())
 }
 
 /// Get auto-hide idle time in seconds
@@ -265,8 +305,15 @@ pub fn hide_fullscreen_get(db: State<Db>) -> bool {
 
 /// Set hide on fullscreen setting
 #[tauri::command]
-pub fn hide_fullscreen_set(db: State<Db>, enabled: bool) -> Result<(), String> {
-    db.set_setting("hide_fullscreen", if enabled { "true" } else { "false" })
+pub fn hide_fullscreen_set(db: State<Db>, app: AppHandle, enabled: bool) -> Result<(), String> {
+    db.set_setting("hide_fullscreen", if enabled { "true" } else { "false" })?;
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(state) = app.try_state::<SystemState>() {
+            update_cached_settings(&state, &app);
+        }
+    }
+    Ok(())
 }
 
 /// Check if hide on battery saver is enabled
@@ -277,6 +324,13 @@ pub fn hide_battery_saver_get(db: State<Db>) -> bool {
 
 /// Set hide on battery saver setting
 #[tauri::command]
-pub fn hide_battery_saver_set(db: State<Db>, enabled: bool) -> Result<(), String> {
-    db.set_setting("hide_battery_saver", if enabled { "true" } else { "false" })
+pub fn hide_battery_saver_set(db: State<Db>, app: AppHandle, enabled: bool) -> Result<(), String> {
+    db.set_setting("hide_battery_saver", if enabled { "true" } else { "false" })?;
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(state) = app.try_state::<SystemState>() {
+            update_cached_settings(&state, &app);
+        }
+    }
+    Ok(())
 }
