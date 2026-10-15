@@ -69,14 +69,22 @@
       if (key === 'log_level') {
         await call('reload_logger');
       }
-    } catch {}
-    flash();
+      flash();
+    } catch (e) {
+      console.error('Failed to save setting:', key, e);
+      alert(`Failed to save setting: ${e}`);
+    }
   }
 
   async function saveAutostart(v) {
     s.autostart = v;
-    try { await call('autostart_set', { enabled: v }); } catch {}
-    flash();
+    try {
+      await call('autostart_set', { enabled: v });
+      flash();
+    } catch (e) {
+      console.error('Failed to save autostart:', e);
+      alert(`Failed to save autostart: ${e}`);
+    }
   }
 
   function flash() {
@@ -190,13 +198,13 @@
       <div class="row">
         <span class="row-label">Corner Radius <span class="val">{s.corner_radius}px</span></span>
         <input type="range" min="4" max="40" value={s.corner_radius}
-               oninput={e=>save('corner_radius', e.target.value)} />
+               onchange={e=>save('corner_radius', e.target.value)} />
       </div>
 
       <div class="row">
         <span class="row-label">Background Color</span>
         <div class="color-row">
-          <input type="color" value={s.bg_color} oninput={e=>save('bg_color',e.target.value)} />
+          <input type="color" value={s.bg_color} onchange={e=>save('bg_color',e.target.value)} />
           <span class="val">{s.bg_color}</span>
         </div>
       </div>
@@ -213,7 +221,7 @@
       <div class="row">
         <span class="row-label">Opacity <span class="val">{s.opacity}%</span></span>
         <input type="range" min="30" max="100" value={s.opacity}
-               oninput={e=>save('opacity',e.target.value)} />
+               onchange={e=>save('opacity',e.target.value)} />
       </div>
 
       <div class="row">
@@ -225,7 +233,7 @@
           </button>
           {#if bool(s.border_on)}
             <input type="color" value={s.border_color}
-                   oninput={e=>save('border_color',e.target.value)} />
+                   onchange={e=>save('border_color',e.target.value)} />
           {/if}
         </div>
       </div>
@@ -278,7 +286,7 @@
       <div class="row indent">
         <span class="row-label">Idle Time <span class="val">{s.auto_hide_time}s</span></span>
         <input type="range" min="5" max="300" value={s.auto_hide_time}
-               oninput={e=>save('auto_hide_time',e.target.value)} />
+               onchange={e=>save('auto_hide_time',e.target.value)} />
       </div>
       {/if}
 
@@ -407,7 +415,7 @@
       <div class="row">
         <span class="row-label">Auto Dismiss <span class="val">{s.progress_auto_dismiss}s after complete</span></span>
         <input type="range" min="1" max="10" value={s.progress_auto_dismiss}
-               oninput={e=>save('progress_auto_dismiss',e.target.value)} />
+               onchange={e=>save('progress_auto_dismiss',e.target.value)} />
       </div>
     </section>
 
