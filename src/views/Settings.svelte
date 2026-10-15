@@ -9,9 +9,9 @@
     bg_color: 'rgba(26, 26, 26, 0)', bg_blur: 'auto', opacity: '95',
     border_on: 'false', border_color: '#6c6c6c',
     auto_hide: 'false', auto_hide_time: '30',
-    hide_fullscreen: 'true', hide_battery_saver: 'false',
+    hide_fullscreen: 'false', hide_battery_saver: 'false',
     click_action: 'expand', always_on_top: 'true',
-    blur_on_battery: 'false',
+    blur_on_battery: 'false', hover_expand: 'false',
     module_media: 'true', module_calendar: 'true', module_tasks: 'true',
     module_clipboard: 'true', module_system: 'true',
     module_file_progress: 'true', module_download_progress: 'true',
@@ -22,7 +22,7 @@
     progress_ring_style: 'arc', progress_auto_dismiss: '3',
     power_mode: 'balanced', ui_update_rate: '1',
     hw_acceleration: 'true',
-    hotkey_toggle: 'ctrl+alt+space', hotkey_settings: 'ctrl+alt+comma',
+    hotkey_toggle: 'ctrl+alt+space',
     log_level: 'error', log_to_file: 'false',
     single_instance_port: '47123',
   };
@@ -62,7 +62,7 @@
       await call('emit_settings_changed');
 
       // Re-register hotkeys if hotkey settings changed
-      if (key === 'hotkey_toggle' || key === 'hotkey_settings') {
+      if (key === 'hotkey_toggle') {
         await call('reregister_hotkeys');
       }
 
@@ -73,7 +73,7 @@
 
       // Enable/disable clipboard module
       if (key === 'module_clipboard') {
-        await call('clipboard_enabled_set', value === 'true');
+        await call('clipboard_enabled_set', { enabled: value === 'true' });
       }
 
       flash();
@@ -321,6 +321,14 @@
           {/each}
         </div>
       </div>
+
+      <div class="row">
+        <span class="row-label">Expand on Hover</span>
+        <button class="toggle" class:on={bool(s.hover_expand)}
+                onclick={()=>save('hover_expand', String(!bool(s.hover_expand)))}>
+          {bool(s.hover_expand) ? 'On' : 'Off'}
+        </button>
+      </div>
     </section>
 
     <!-- -- MODULES ------------------------------------------------------- -->
@@ -481,7 +489,6 @@
 
       {#each [
         {key:'hotkey_toggle',   label:'Expand / Collapse Island'},
-        {key:'hotkey_settings', label:'Open Settings'},
       ] as hk}
       <div class="row">
         <span class="row-label">{hk.label}</span>
@@ -495,7 +502,8 @@
 
       <div class="info-box">
         Hotkey changes take effect immediately.<br/>
-        Current toggle: <strong>{s.hotkey_toggle}</strong>
+        Current toggle: <strong>{s.hotkey_toggle}</strong><br/>
+        Open Settings from the island by clicking the Settings tab.
       </div>
     </section>
 

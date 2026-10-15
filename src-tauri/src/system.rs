@@ -40,7 +40,7 @@ impl SystemState {
             is_battery_saver: Arc::new(AtomicBool::new(false)),
             auto_hide_idle: Arc::new(AtomicBool::new(false)),
             should_hide: Arc::new(AtomicBool::new(false)),
-            hide_fullscreen: Arc::new(AtomicBool::new(true)),
+            hide_fullscreen: Arc::new(AtomicBool::new(false)),
             hide_battery_saver: Arc::new(AtomicBool::new(false)),
             auto_hide: Arc::new(AtomicBool::new(false)),
         }

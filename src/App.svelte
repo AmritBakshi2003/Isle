@@ -51,6 +51,7 @@
     progress_battery_stretch: 'true',
     progress_ring_style: 'arc',
     progress_auto_dismiss: '3',
+    hover_expand: 'false',
   });
   
   const tabs = $derived(allTabs.filter(t => {
@@ -63,7 +64,11 @@
   let clock = $state(fmtClock());
   let closeTimer;
   let autoDismissTimer;
+  let hoverTimer;
+  let chargingIndicatorTimer;
   let settingsLoaded = $state(false);
+  let isHovering = $state(false);
+  let showChargingIndicator = $state(false);
 
   // ── apply appearance + behavior settings ───────────────────────────────
   const DEFAULT_SETTINGS = {
@@ -90,6 +95,7 @@
     progress_battery_stretch: 'true',
     progress_ring_style: 'arc',
     progress_auto_dismiss: '3',
+    hover_expand: 'false',
   };
 
   function applySettings(s) {
@@ -114,6 +120,7 @@
       progress_battery_stretch: settings.progress_battery_stretch ?? 'true',
       progress_ring_style: settings.progress_ring_style ?? 'arc',
       progress_auto_dismiss: settings.progress_auto_dismiss ?? '3',
+      hover_expand: settings.hover_expand ?? 'false',
     });
     
     const root = document.documentElement;
@@ -162,6 +169,18 @@
     }
   });
 
+  // Show charging indicator temporarily when charging state changes to true
+  $effect(() => {
+    if (progress.charging && !showChargingIndicator) {
+      showChargingIndicator = true;
+      clearTimeout(chargingIndicatorTimer);
+      chargingIndicatorTimer = setTimeout(() => {
+        showChargingIndicator = false;
+      }, 3000); // Show for 3 seconds then hide
+    }
+    return () => clearTimeout(chargingIndicatorTimer);
+  });
+
   // Auto-dismiss progress when it reaches 100%
   $effect(() => {
     if (progress.value >= 100 && Number(moduleSettings.progress_auto_dismiss) > 0) {
@@ -177,10 +196,14 @@
   // Ring is drawn in an SVG sibling to .island; sits ~7px outside the pill edge.
   const RING_PAD    = 7;    // gap between pill edge and ring stroke centre
   const RING_STROKE = 3;
-  const PILL_W      = $derived(!ui.expanded && progress.charging ? 206 : 190);
+  const PILL_W      = $derived(() => {
+    const sizeMap = { small: 170, medium: 200, large: 240 };
+    const baseW = sizeMap[moduleSettings.pill_size] || 200;
+    return !ui.expanded && showChargingIndicator ? baseW + 16 : baseW;
+  });
   const PILL_H      = 38;
   const ringR       = $derived(PILL_H / 2 + RING_PAD);
-  const svgW        = $derived(PILL_W + (RING_PAD + RING_STROKE + 2) * 2);
+  const svgW        = $derived(PILL_W() + (RING_PAD + RING_STROKE + 2) * 2);
   const svgH        = PILL_H + (RING_PAD + RING_STROKE + 2) * 2;
   const cx          = $derived(svgW / 2);
   const cy          = svgH / 2;
@@ -219,6 +242,17 @@
     closeTimer = setTimeout(() => call('island_resize', { expanded: false }), 520);
   }
   const toggle = () => (ui.expanded ? collapse() : expand());
+
+  // Show pill without expanding (for hotkey)
+  function showPill() {
+    if (ui.expanded) {
+      collapse();
+    }
+    // Ensure window is visible and focused
+    if (inTauri) {
+      call('window_show').catch(() => {});
+    }
+  }
   
   function handlePillClick() {
     const action = moduleSettings.click_action || 'expand';
@@ -226,6 +260,27 @@
       toggle();
     }
     // If action is 'nothing', do nothing
+  }
+
+  // ── hover expand/collapse ─────────────────────────────────────────────────
+  function handleMouseEnter() {
+    if (moduleSettings.hover_expand === 'true' && !ui.expanded) {
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        expand();
+      }, 100); // Small delay to prevent accidental expansion
+    }
+    isHovering = true;
+  }
+
+  function handleMouseLeave() {
+    isHovering = false;
+    if (moduleSettings.hover_expand === 'true' && ui.expanded) {
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        collapse();
+      }, 300); // Delay before collapsing when mouse leaves
+    }
   }
 
   function openSettings() {
@@ -283,6 +338,7 @@
     const offs = [
       on('media://update', applyMedia),
       on('island://toggle', toggle),
+      on('island://show', showPill),
       on('progress://update', ({ value, label }) => {
         setProgress(value, label ?? '');
       }),
@@ -330,10 +386,12 @@
     // Load settings and apply CSS vars on mount
     call('settings_get_all').then(applySettings).catch(() => {});
 
-    return () => { 
-      offs.forEach((o) => o()); 
-      window.removeEventListener('blur', onBlur); 
-      clearTimeout(t); 
+    return () => {
+      offs.forEach((o) => o());
+      window.removeEventListener('blur', onBlur);
+      clearTimeout(t);
+      clearTimeout(hoverTimer);
+      clearTimeout(chargingIndicatorTimer);
     };
   });
 </script>
@@ -351,6 +409,7 @@
       aria-hidden="true"
       in:fade={{ duration: 220 }}
       out:fade={{ duration: 350 }}
+      style="left: 50%; transform: translateX(-50%)"
     >
       {#if ringStyle === 'arc' || ringStyle === 'full'}
         <circle cx={cx} cy={cy} r={ringR} fill="none"
@@ -371,10 +430,23 @@
     </svg>
   {/if}
 
+  <!-- ── hover detection zone ── invisible area around the pill for hover expand ── -->
+  {#if moduleSettings.hover_expand === 'true' && !ui.expanded}
+    <div
+      class="hover-zone"
+      class:charging={showChargingIndicator}
+      onmouseenter={handleMouseEnter}
+      onmouseleave={handleMouseLeave}
+      aria-hidden="true"
+    ></div>
+  {/if}
+
   <div
     class="island"
     class:open={ui.expanded}
-    class:charging={progress.charging && !ui.expanded}
+    class:charging={showChargingIndicator && !ui.expanded}
+    onmouseenter={handleMouseEnter}
+    onmouseleave={handleMouseLeave}
     role="group"
     aria-label="Isle"
   >
@@ -387,7 +459,7 @@
           <span class="clock">{clock}</span>
         {/if}
 
-        {#if progress.charging}
+        {#if showChargingIndicator}
           <span class="bolt" aria-label="Charging" in:fade={{ duration: 180 }} out:fade={{ duration: 150 }}>⚡</span>
         {:else if progress.battery !== null}
           <span class="battery-dot" style:background={battColour}
@@ -450,12 +522,29 @@
     pointer-events: none;
     overflow: visible;
     z-index: 1;
+    width: auto;
+    height: auto;
   }
   .arc {
     transition: stroke-dashoffset .45s cubic-bezier(.4,0,.2,1), stroke .3s ease;
   }
   .progress-ring rect {
     transition: width .45s cubic-bezier(.4,0,.2,1), fill .3s ease;
+  }
+
+  /* ── hover detection zone ─────────────────────────────────────────────── */
+  .hover-zone {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: calc(var(--setting-pill-w, 200px) + 100px);
+    height: calc(38px + 60px);
+    pointer-events: auto;
+    z-index: 3;
+  }
+  .hover-zone.charging {
+    width: calc(var(--setting-pill-w, 200px) + 116px);
   }
 
   /* ── island ────────────────────────────────────────────────────────── */
@@ -467,10 +556,10 @@
     box-shadow: none;
     border: var(--setting-border, none);
     transition: width .6s var(--spring), height .6s var(--spring), border-radius .6s var(--spring);
-    z-index: 2;
+    z-index: 1;
   }
   .island.open     { --w: 500px; --h: 326px; --r: 30px; }
-  .island.charging { --w: 206px; } /* pill stretches when charger plugged */
+  .island.charging { --w: calc(var(--setting-pill-w, 200px) + 16px); }
 
   /* ── collapsed ─────────────────────────────────────────────────────── */
   .mini {

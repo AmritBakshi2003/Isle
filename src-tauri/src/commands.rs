@@ -316,9 +316,16 @@ pub fn setting_get(db: State<Db>, key: String) -> Option<String> {
 
 /// Known keys: wallpaper_dir, wallpaper_interval (minutes), active_mode.
 #[tauri::command]
-pub fn setting_set(db: State<Db>, sched: State<Scheduler>, key: String, value: String) -> Result<(), String> {
+pub fn setting_set(db: State<Db>, sched: State<Scheduler>, _app: AppHandle, key: String, value: String) -> Result<(), String> {
     db.set_setting(&key, &value)?;
     sched.wake();
+
+    // Special handling for module_clipboard to keep runtime flag in sync
+    if key == "module_clipboard" {
+        let enabled = value == "true";
+        clipboard::set_enabled(enabled);
+    }
+
     Ok(())
 }
 
@@ -435,14 +442,12 @@ pub fn emit_settings_changed(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn reregister_hotkeys(app: AppHandle, db: State<Db>) -> Result<(), String> {
     let toggle_hk = db.setting("hotkey_toggle").unwrap_or_else(|| "ctrl+alt+space".to_string());
-    let settings_hk = db.setting("hotkey_settings").unwrap_or_else(|| "ctrl+alt+comma".to_string());
 
     // Unregister existing hotkeys first
     let _ = app.global_shortcut().unregister_all();
 
-    // Re-register with new values
+    // Re-register with new value
     island::register_hotkey(&app, &toggle_hk);
-    island::register_settings_hotkey(&app, &settings_hk);
 
     Ok(())
 }
@@ -462,6 +467,7 @@ pub fn clipboard_enabled_get() -> bool {
 
 /// Enable or disable clipboard module
 #[tauri::command]
-pub fn clipboard_enabled_set(enabled: bool) {
+pub fn clipboard_enabled_set(enabled: bool) -> Result<(), String> {
     clipboard::set_enabled(enabled);
+    Ok(())
 }

@@ -107,20 +107,24 @@ pub fn hotkey_plugin() -> TauriPlugin<Wry> {
             let s = shortcut.into_string().to_lowercase();
 
             // Check if this is the toggle hotkey by comparing with DB value
+            // Normalize both strings: "control" -> "ctrl" for consistent comparison
             let db = app.try_state::<crate::db::Db>();
             let toggle_hk = db.and_then(|d| d.setting("hotkey_toggle"))
                 .unwrap_or_else(|| "ctrl+alt+space".to_string())
-                .to_lowercase();
+                .to_lowercase()
+                .replace("control", "ctrl");
 
-            if s == toggle_hk {
-                // Toggle shortcut → show/focus the pill
+            let s_normalized = s.replace("control", "ctrl");
+
+            if s_normalized == toggle_hk {
+                // Toggle shortcut → show/focus the pill (collapsed state only)
+                // Always show the window even if in fullscreen (override hide logic)
                 if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
                     let _ = w.set_focus();
                 }
-                let _ = app.emit("island://toggle", ());
-            } else {
-                // Settings shortcut → open settings window (lazy creation)
-                show_settings(app);
+                // Emit show event instead of toggle - this shows the pill without expanding
+                let _ = app.emit("island://show", ());
             }
         })
         .build()
@@ -133,15 +137,5 @@ pub fn register_hotkey(app: &AppHandle, hotkey: &str) {
     match app.global_shortcut().register(hotkey) {
         Ok(_)  => eprintln!("[isle] toggle hotkey {} registered", hotkey),
         Err(e) => eprintln!("[isle] toggle hotkey registration skipped ({}). Use tray to toggle.", e),
-    }
-}
-
-/// Register the settings hotkey (default: ctrl+alt+comma) read from the DB.
-/// Uses the same plugin handler registered in hotkey_plugin() — any shortcut
-/// that does NOT contain "space" will open the settings window.
-pub fn register_settings_hotkey(app: &AppHandle, hotkey: &str) {
-    match app.global_shortcut().register(hotkey) {
-        Ok(_)  => eprintln!("[isle] settings hotkey {} registered", hotkey),
-        Err(e) => eprintln!("[isle] settings hotkey skipped ({})", e),
     }
 }
