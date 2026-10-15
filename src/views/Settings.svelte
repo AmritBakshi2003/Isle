@@ -23,7 +23,8 @@
     power_mode: 'balanced', ui_update_rate: '1',
     hw_acceleration: 'true',
     hotkey_toggle: 'ctrl+alt+space', hotkey_settings: 'ctrl+alt+comma',
-    log_level: 'error',
+    log_level: 'error', log_to_file: 'false',
+    single_instance_port: '47123',
   };
 
   let s = $state({ ...DEFAULTS, autostart: false });
@@ -65,8 +66,8 @@
         await call('reregister_hotkeys');
       }
 
-      // Reload logger if log_level changed
-      if (key === 'log_level') {
+      // Reload logger if log_level or log_to_file changed
+      if (key === 'log_level' || key === 'log_to_file') {
         await call('reload_logger');
       }
 
@@ -510,6 +511,21 @@
             <button class:on={s.log_level===l} onclick={()=>save('log_level',l)}>{l}</button>
           {/each}
         </div>
+      </div>
+
+      <div class="row">
+        <span class="row-label">Log to File</span>
+        <div class="seg">
+          {#each ['false','true'] as v}
+            <button class:on={s.log_to_file===v} onclick={()=>save('log_to_file',v)}>{v==='true'?'On':'Off'}</button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="row-label">Single Instance Port</span>
+        <input type="number" value={s.single_instance_port}
+               onchange={e=>save('single_instance_port',e.target.value)} />
       </div>
 
       <div class="divider"></div>

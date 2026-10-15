@@ -51,7 +51,7 @@
       "title": "Isle"
     },
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval'; connect-src 'self' ws://localhost:1420"
+      "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws://localhost:1420"
     }
   },
 

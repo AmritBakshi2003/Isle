@@ -19,13 +19,22 @@ pub const EXPANDED:  (f64, f64) = (500.0, 352.0);
 
 // ── single-instance guard ────────────────────────────────────────────────────
 // Try to bind a local TCP port. If it's already taken, another Isle is running.
-// First instance: binds port 47123, spawns a listener thread that shows the
-// pill when a connection arrives from a second instance.
-// Second instance: connect to port 47123 (wakes first instance), then exit.
+// First instance: binds port 47123 (configurable via single_instance_port setting),
+// spawns a listener thread that shows the pill when a connection arrives from a second instance.
+// Second instance: connect to port (wakes first instance), then exit.
 
 pub fn ensure_single_instance(app: &AppHandle) -> bool {
     use std::net::TcpListener;
-    match TcpListener::bind("127.0.0.1:47123") {
+
+    // Try to get port from settings (may not be available yet on first run)
+    let port = app.try_state::<crate::db::Db>()
+        .and_then(|db| db.setting("single_instance_port"))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(47123);
+
+    let addr = format!("127.0.0.1:{}", port);
+
+    match TcpListener::bind(&addr) {
         Ok(listener) => {
             // We are the first instance. Spawn a listener thread that
             // activates the pill whenever a second instance tries to connect.
@@ -37,7 +46,6 @@ pub fn ensure_single_instance(app: &AppHandle) -> bool {
                         let _ = w.show();
                         let _ = w.set_focus();
                     }
-                    let _ = app2.emit("island://toggle", ());
                     eprintln!("[isle] second instance detected — showing existing window");
                 }
             });
@@ -46,7 +54,7 @@ pub fn ensure_single_instance(app: &AppHandle) -> bool {
         Err(_) => {
             // Port taken → another Isle is running. Signal it to show itself.
             use std::net::TcpStream;
-            let _ = TcpStream::connect("127.0.0.1:47123");
+            let _ = TcpStream::connect(&addr);
             false
         }
     }

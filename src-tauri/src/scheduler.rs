@@ -104,7 +104,9 @@ fn tick(app: &AppHandle) -> Duration {
             .as_array()
             .map(|d| d.is_empty() || d.iter().any(|x| x.as_i64() == Some(dow)))
             .unwrap_or(true);
-        if trig["at"].as_str() == Some(hhmm.as_str()) && days_ok && last_run / 60 != now / 60 {
+        // Check if routine was missed (last_run > 5 minutes ago or in a different hour)
+        let missed = last_run < now - 300 || last_run / 60 != now / 60;
+        if trig["at"].as_str() == Some(hhmm.as_str()) && days_ok && missed {
             let _ = db.with(|c| c.execute("UPDATE routines SET last_run=?1 WHERE id=?2", [now, id]));
             let _ = actions::run(app, &acts);
         }

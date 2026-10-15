@@ -43,6 +43,7 @@ pub fn run() {
 
             // Single-instance guard: if Isle is already running, signal the
             // existing instance to show itself, then exit cleanly.
+            // Note: ensure_single_instance uses default port (47123) since DB isn't available yet
             if !island::ensure_single_instance(&handle) {
                 eprintln!("[isle] another instance is already running — signalled it to show. Exiting.");
                 app.handle().exit(0);
