@@ -1,76 +1,72 @@
 <!--
   UtilityDrawer.svelte: Minimalist centralized utility drawer
-  Micro-apps for quick tasks without loading heavy software.
-  Integrates with Windows native tools (Calculator, Notepad, System settings).
+  Windows native tools and custom app shortcuts for quick access.
 -->
 <script>
   import { call } from '../lib/api.js';
   import { toast } from '../lib/state.svelte.js';
   import Icon from '../lib/Icon.svelte';
 
-  // Quick calculator state
-  let calcDisplay = $state('0');
-  let calcPrev = $state(null);
-  let calcOp = $state(null);
-  let calcNew = $state(true);
+  // App shortcuts state
+  let shortcuts = $state([]);
+  let availableApps = $state([]);
+  let showAppPicker = $state(false);
+  let searchQuery = $state('');
 
-  // Quick scratchpad state
-  let scratchpad = $state('');
-
-  async function loadScratchpad() {
+  async function loadShortcuts() {
     try {
-      scratchpad = (await call('setting_get', { key: 'scratchpad' })) ?? '';
+      shortcuts = await call('app_shortcuts_list');
     } catch (e) {
-      scratchpad = '';
+      console.error('Failed to load shortcuts:', e);
     }
   }
-  loadScratchpad();
+  loadShortcuts();
 
-  async function saveScratchpad() {
-    await call('setting_set', { key: 'scratchpad', value: scratchpad });
-  }
-
-  // Calculator functions
-  function calcInput(n) {
-    if (calcNew) {
-      calcDisplay = n;
-      calcNew = false;
-    } else {
-      calcDisplay = calcDisplay === '0' ? n : calcDisplay + n;
+  async function loadAvailableApps() {
+    try {
+      availableApps = await call('enumerate_apps');
+    } catch (e) {
+      console.error('Failed to enumerate apps:', e);
+      toast('Failed to load apps');
     }
   }
 
-  function calcOpSet(op) {
-    if (calcPrev !== null && !calcNew) {
-      calcCalculate();
+  async function addShortcut(app) {
+    try {
+      await call('app_shortcut_add', { name: app.name, path: app.path });
+      toast(`Added ${app.name}`);
+      await loadShortcuts();
+      showAppPicker = false;
+    } catch (e) {
+      console.error('Failed to add shortcut:', e);
+      toast('Failed to add shortcut');
     }
-    calcPrev = parseFloat(calcDisplay);
-    calcOp = op;
-    calcNew = true;
   }
 
-  function calcCalculate() {
-    if (calcPrev === null || calcOp === null) return;
-    const current = parseFloat(calcDisplay);
-    let result;
-    switch (calcOp) {
-      case '+': result = calcPrev + current; break;
-      case '-': result = calcPrev - current; break;
-      case '×': result = calcPrev * current; break;
-      case '÷': result = calcPrev / current; break;
-      default: return;
+  async function removeShortcut(shortcut) {
+    try {
+      await call('app_shortcut_remove', { id: shortcut.id });
+      toast('Shortcut removed');
+      await loadShortcuts();
+    } catch (e) {
+      console.error('Failed to remove shortcut:', e);
+      toast('Failed to remove shortcut');
     }
-    calcDisplay = String(result);
-    calcPrev = null;
-    calcOp = null;
-    calcNew = true;
   }
 
-  function calcClear() {
-    calcDisplay = '0';
-    calcPrev = null;
-    calcOp = null;
-    calcNew = true;
+  async function launchShortcut(shortcut) {
+    try {
+      await call('app_shortcut_launch', { path: shortcut.path });
+    } catch (e) {
+      console.error('Failed to launch app:', e);
+      toast('Failed to launch app');
+    }
+  }
+
+  function openAppPicker() {
+    loadAvailableApps();
+    showAppPicker = true;
+    searchQuery = '';
   }
 
   // Windows native tools
@@ -100,55 +96,20 @@
       toast('Failed to open Settings');
     }
   }
+
+  let filteredApps = $derived(availableApps.filter(app => {
+    const query = searchQuery.toLowerCase();
+    return app.name.toLowerCase().includes(query) ||
+           app.path.toLowerCase().includes(query);
+  }));
 </script>
 
 <div class="utility-drawer">
   <div class="section">
-    <h3>Quick Calculator</h3>
-    <div class="calculator">
-      <div class="calc-display">{calcDisplay}</div>
-      <div class="calc-buttons">
-        <button class="calc-btn op" onclick={calcClear}>C</button>
-        <button class="calc-btn op" onclick={() => calcOpSet('÷')}>÷</button>
-        <button class="calc-btn op" onclick={() => calcOpSet('×')}>×</button>
-        <button class="calc-btn op" onclick={() => calcOpSet('-')}>−</button>
-
-        <button class="calc-btn num" onclick={() => calcInput('7')}>7</button>
-        <button class="calc-btn num" onclick={() => calcInput('8')}>8</button>
-        <button class="calc-btn num" onclick={() => calcInput('9')}>9</button>
-        <button class="calc-btn op" onclick={() => calcOpSet('+')}>+</button>
-
-        <button class="calc-btn num" onclick={() => calcInput('4')}>4</button>
-        <button class="calc-btn num" onclick={() => calcInput('5')}>5</button>
-        <button class="calc-btn num" onclick={() => calcInput('6')}>6</button>
-        <button class="calc-btn eq" onclick={calcCalculate} style="grid-row: span 2">=</button>
-
-        <button class="calc-btn num" onclick={() => calcInput('1')}>1</button>
-        <button class="calc-btn num" onclick={() => calcInput('2')}>2</button>
-        <button class="calc-btn num" onclick={() => calcInput('3')}>3</button>
-
-        <button class="calc-btn num" onclick={() => calcInput('0')} style="grid-column: span 2">0</button>
-        <button class="calc-btn num" onclick={() => calcInput('.')}>.</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="section">
-    <h3>Quick Scratchpad</h3>
-    <textarea
-      class="scratchpad"
-      bind:value={scratchpad}
-      onblur={saveScratchpad}
-      placeholder="Type quick notes here..."
-      aria-label="Quick scratchpad"
-    ></textarea>
-  </div>
-
-  <div class="section">
     <h3>Windows Tools</h3>
     <div class="tools-grid">
       <button class="tool-card" onclick={openCalc}>
-        <Icon name="system" size={24} />
+        <Icon name="calc" size={24} />
         <span>Calculator</span>
       </button>
       <button class="tool-card" onclick={openNotepad}>
@@ -161,7 +122,83 @@
       </button>
     </div>
   </div>
+
+  <div class="section">
+    <div class="section-header">
+      <h3>My Apps</h3>
+      <button class="add-btn" onclick={openAppPicker} aria-label="Add app shortcut">
+        <Icon name="plus" size={16} />
+      </button>
+    </div>
+    {#if shortcuts.length === 0}
+      <div class="empty-state">
+        <p>No shortcuts yet. Click + to add apps.</p>
+      </div>
+    {:else}
+      <div class="shortcuts-grid">
+        {#each shortcuts as shortcut (shortcut.id)}
+          <div
+            class="shortcut-card"
+            onclick={() => launchShortcut(shortcut)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') launchShortcut(shortcut); }}
+            role="button"
+            tabindex="0"
+          >
+            <div class="shortcut-name">{shortcut.name}</div>
+            <div
+              class="remove-btn"
+              onclick={(e) => { e.stopPropagation(); removeShortcut(shortcut); }}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); removeShortcut(shortcut); } }}
+              role="button"
+              tabindex="0"
+              aria-label="Remove"
+            >
+              <Icon name="trash" size={12} />
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
 </div>
+
+{#if showAppPicker}
+  <div
+    class="modal-overlay"
+    onclick={() => showAppPicker = false}
+    onkeydown={(e) => { if (e.key === 'Escape') showAppPicker = false; }}
+    role="button"
+    tabindex="0"
+    aria-label="Close modal"
+  >
+    <div class="modal" onclick={(e) => e.stopPropagation()}>
+      <div class="modal-header">
+        <h3>Add App Shortcut</h3>
+        <button class="close-btn" onclick={() => showAppPicker = false} aria-label="Close">
+          <Icon name="close" size={20} />
+        </button>
+      </div>
+      <input
+        class="search-input"
+        bind:value={searchQuery}
+        placeholder="Search apps..."
+        aria-label="Search apps"
+      />
+      <div class="apps-list">
+        {#if filteredApps.length === 0}
+          <div class="no-results">No apps found</div>
+        {:else}
+          {#each filteredApps as app (app.path)}
+            <button class="app-item" onclick={() => addShortcut(app)}>
+              <span class="app-name">{app.name}</span>
+              <Icon name="plus" size={16} />
+            </button>
+          {/each}
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .utility-drawer {
@@ -181,81 +218,6 @@
     color: var(--dim);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-  }
-
-  /* Calculator */
-  .calculator {
-    background: var(--row);
-    border-radius: 12px;
-    padding: 12px;
-  }
-
-  .calc-display {
-    background: #0a0a0a;
-    border-radius: 8px;
-    padding: 12px;
-    text-align: right;
-    font-size: 24px;
-    font-weight: 500;
-    margin-bottom: 12px;
-    min-height: 48px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-  }
-
-  .calc-buttons {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 6px;
-  }
-
-  .calc-btn {
-    background: var(--row-hi);
-    border: none;
-    border-radius: 8px;
-    padding: 12px;
-    font-size: 18px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s;
-    color: var(--ink);
-  }
-
-  .calc-btn:hover {
-    background: var(--accent);
-  }
-
-  .calc-btn.op {
-    color: var(--accent);
-  }
-
-  .calc-btn.eq {
-    background: var(--accent);
-    color: #0a0a0a;
-  }
-
-  .calc-btn.eq:hover {
-    filter: brightness(1.1);
-  }
-
-  /* Scratchpad */
-  .scratchpad {
-    width: 100%;
-    height: 120px;
-    background: var(--row);
-    border: 1px solid var(--row-hi);
-    border-radius: 12px;
-    padding: 12px;
-    font-size: 14px;
-    color: var(--ink);
-    resize: none;
-    font-family: inherit;
-  }
-
-  .scratchpad:focus {
-    outline: 2px solid var(--accent);
-    outline-offset: -1px;
   }
 
   /* Tools Grid */
@@ -287,5 +249,217 @@
   .tool-card span {
     font-size: 12px;
     color: var(--dim);
+  }
+
+  /* App Shortcuts */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .section-header h3 {
+    margin: 0;
+  }
+
+  .add-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: var(--row-hi);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--ink);
+    transition: background 0.2s;
+  }
+
+  .add-btn:hover {
+    background: var(--accent);
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 24px;
+    color: var(--dim);
+    font-size: 13px;
+  }
+
+  .shortcuts-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
+  .shortcut-card {
+    background: var(--row);
+    border: 1px solid var(--row-hi);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  .shortcut-card:hover {
+    background: var(--row-hi);
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+
+  .shortcut-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .shortcut-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink);
+    text-align: center;
+    word-break: break-word;
+  }
+
+  .remove-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: rgba(255, 138, 128, 0.1);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: #ff8a80;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .shortcut-card:hover .remove-btn {
+    opacity: 1;
+  }
+
+  .remove-btn:hover {
+    background: rgba(255, 138, 128, 0.2);
+  }
+
+  .remove-btn:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: var(--bg);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 400px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    border-bottom: 1px solid var(--row-hi);
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    font-size: 16px;
+  }
+
+  .close-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--dim);
+  }
+
+  .close-btn:hover {
+    background: var(--row-hi);
+    color: var(--ink);
+  }
+
+  .search-input {
+    margin: 16px;
+    padding: 10px 12px;
+    background: var(--row);
+    border: 1px solid var(--row-hi);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--ink);
+  }
+
+  .search-input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+
+  .apps-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 16px 16px;
+  }
+
+  .no-results {
+    text-align: center;
+    padding: 24px;
+    color: var(--dim);
+    font-size: 13px;
+  }
+
+  .app-item {
+    width: 100%;
+    padding: 12px;
+    background: var(--row);
+    border: 1px solid var(--row-hi);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .app-item:hover {
+    background: var(--row-hi);
+    border-color: var(--accent);
+  }
+
+  .app-name {
+    font-size: 13px;
+    color: var(--ink);
   }
 </style>

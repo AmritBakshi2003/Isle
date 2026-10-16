@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS modes(
 CREATE TABLE IF NOT EXISTS routines(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, trig TEXT NOT NULL, actions TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS app_shortcuts(
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE);
 ";
 
 /// Migration steps to evolve the schema without breaking existing databases.
@@ -61,6 +63,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     // v4: Add start_time and end_time columns to tasks for unified timeline view
     ("4", "ALTER TABLE tasks ADD COLUMN start_time INTEGER"),
     ("4", "ALTER TABLE tasks ADD COLUMN end_time INTEGER"),
+    // v5: Add app_shortcuts table for custom app shortcuts
+    ("5", "CREATE TABLE IF NOT EXISTS app_shortcuts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE)"),
 ];
 
 impl Db {

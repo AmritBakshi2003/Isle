@@ -13,6 +13,7 @@
 //!   7. build system tray (right-click → Show/Hide | Quit)
 
 mod actions;
+mod apps;
 mod clipboard;
 mod commands;
 mod db;
@@ -195,6 +196,11 @@ pub fn run() {
             commands::clipboard_enabled_get,
             commands::clipboard_enabled_set,
             commands::open_native,
+            commands::enumerate_apps,
+            commands::app_shortcuts_list,
+            commands::app_shortcut_add,
+            commands::app_shortcut_remove,
+            commands::app_shortcut_launch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Isle");

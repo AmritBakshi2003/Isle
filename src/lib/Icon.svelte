@@ -44,6 +44,8 @@
     forward: '<path d="M9 5l7 7-7 7"/>',
     utility: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h8"/>',
     workspace: '<rect x="2" y="3" width="20" height="18" rx="2"/><path d="M4 7h6M4 11h2M4 15h4"/><circle cx="16" cy="8" r="2"/><path d="M16 12v2"/>',
+    close: '<path d="M18 6L6 18M6 6l12 12"/>',
+    calc: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h3M8 10h3M8 14h3M13 6h3M13 10h3M13 14h3M8 18h8"/>',
   };
 </script>
 

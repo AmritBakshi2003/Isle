@@ -11,6 +11,7 @@
 
 use crate::{
     actions,
+    apps,
     clipboard,
     db::{e2s, now, Db},
     island,
@@ -581,9 +582,66 @@ pub async fn open_native(app: String) -> Result<(), String> {
             Command::new("notepad.exe").spawn().map_err(|e| e.to_string())?;
         }
         "settings" => {
-            Command::new("ms-settings:").spawn().map_err(|e| e.to_string())?;
+            Command::new("cmd")
+                .args(["/c", "start", "ms-settings:"])
+                .spawn()
+                .map_err(|e| e.to_string())?;
         }
         _ => return Err(format!("Unknown app: {}", app)),
+    }
+    Ok(())
+}
+
+/// Enumerate installed Windows applications from Start Menu
+#[tauri::command]
+pub fn enumerate_apps() -> Result<Vec<apps::AppShortcut>, String> {
+    apps::enumerate_apps()
+}
+
+/// Get user's saved app shortcuts
+#[tauri::command]
+pub fn app_shortcuts_list(db: State<Db>) -> Result<Vec<apps::AppShortcut>, String> {
+    db.with(|c| {
+        let mut s = c.prepare("SELECT id,name,path FROM app_shortcuts ORDER BY name")?;
+        let rows = s.query_map([], |r| {
+            Ok(apps::AppShortcut {
+                id: Some(r.get(0)?),
+                name: r.get(1)?,
+                path: r.get(2)?,
+                icon: None,
+            })
+        })?;
+        rows.collect()
+    })
+}
+
+/// Add an app shortcut
+#[tauri::command]
+pub fn app_shortcut_add(db: State<Db>, name: String, path: String) -> Result<i64, String> {
+    db.with(|c| {
+        c.execute("INSERT INTO app_shortcuts(name,path) VALUES(?1,?2)", params![name, path])?;
+        Ok(c.last_insert_rowid())
+    })
+}
+
+/// Remove an app shortcut
+#[tauri::command]
+pub fn app_shortcut_remove(db: State<Db>, id: i64) -> Result<(), String> {
+    db.with(|c| c.execute("DELETE FROM app_shortcuts WHERE id=?1", [id]).map(|_| ()))
+}
+
+/// Launch an app shortcut
+#[tauri::command]
+pub async fn app_shortcut_launch(path: String) -> Result<(), String> {
+    use std::process::Command;
+    // Use 'start' command to launch .lnk files or executables
+    if cfg!(windows) {
+        Command::new("cmd")
+            .args(["/c", "start", "", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    } else {
+        Command::new(&path).spawn().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
