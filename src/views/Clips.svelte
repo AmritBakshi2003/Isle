@@ -13,7 +13,23 @@
   const load = async () => (items = await call('clip_list', { query: q || null }));
 
   $effect(() => { q; load(); });
-  onMount(() => on('clipboard://changed', load));
+  onMount(() => {
+    on('clipboard://changed', load);
+    
+    // Add global keydown handler for Ctrl+V
+    const handleGlobalKeydown = (e) => {
+      if (e.ctrlKey && e.key === 'v') {
+        e.preventDefault();
+        e.stopPropagation();
+        pasteFromClipboard();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeydown, true);
+    
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeydown, true);
+    };
+  });
 
   async function copy(c) {
     try { await call('clip_copy', { id: c.id }); toast('Copied'); } catch (e) { toast(e); }
@@ -80,6 +96,15 @@
 
   const textItems = $derived(items.filter(c => !isFile(c)));
   const fileItems = $derived(items.filter(c => isFile(c)));
+
+  function handleKeydown(e) {
+    // Ctrl+V to paste files from clipboard
+    if (e.ctrlKey && e.key === 'v') {
+      e.preventDefault();
+      e.stopPropagation();
+      pasteFromClipboard();
+    }
+  }
 </script>
 
 <div class="view">

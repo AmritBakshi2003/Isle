@@ -36,14 +36,18 @@ static LOG_FILE: Mutex<Option<std::fs::File>> = Mutex::new(None);
 
 /// Update the global log level from a string
 pub fn set_level(level: &str) {
-    let mut guard = LOG_LEVEL.write().unwrap();
-    *guard = LogLevel::from_str(level);
+    if let Ok(mut guard) = LOG_LEVEL.write() {
+        *guard = LogLevel::from_str(level);
+    } else {
+        eprintln!("[isle WARNING] Failed to acquire log level lock, using default");
+    }
 }
 
 /// Get the current log level
 pub fn get_level() -> LogLevel {
-    let guard = LOG_LEVEL.read().unwrap();
-    *guard
+    LOG_LEVEL.read()
+        .map(|guard| *guard)
+        .unwrap_or(LogLevel::Error) // Default to error if lock is poisoned
 }
 
 /// Log an error message (always shown unless level is None)
@@ -96,7 +100,11 @@ pub fn init_from_db(app: &tauri::AppHandle) {
                     .append(true)
                     .open(&log_path)
                 {
-                    *LOG_FILE.lock().unwrap() = Some(file);
+                    if let Ok(mut log_file) = LOG_FILE.lock() {
+                        *log_file = Some(file);
+                    } else {
+                        eprintln!("[isle WARNING] Failed to acquire log file lock");
+                    }
                 }
             }
         }

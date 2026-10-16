@@ -114,7 +114,11 @@ mod imp {
             hook!(s, app, MediaPropertiesChanged);
             hook!(s, app, PlaybackInfoChanged);
         }
-        *SESSION.lock().unwrap() = session.clone().map(Sess);
+        if let Ok(mut sess) = SESSION.lock() {
+            *sess = session.clone().map(Sess);
+        } else {
+            eprintln!("[isle WARNING] Failed to acquire media session lock");
+        }
         publish(app, session.as_ref());
     }
 
@@ -124,8 +128,10 @@ mod imp {
     }
 
     pub fn current() -> MediaState {
-        let g = SESSION.lock().unwrap();
-        g.as_ref().and_then(|s| read(&s.0).ok()).unwrap_or_default()
+        SESSION.lock()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|s| read(&s.0).ok()))
+            .unwrap_or_default()
     }
 
     fn unix_ms() -> i64 {
@@ -156,12 +162,16 @@ mod imp {
 
         let key = format!("{title}\u{1}{artist}\u{1}{album}");
         let art = {
-            let mut c = ART.lock().unwrap();
-            if c.0 != key || c.1.is_none() {
-                c.1 = thumbnail(&p).ok().flatten();
-                c.0 = key;
+            if let Ok(mut c) = ART.lock() {
+                if c.0 != key || c.1.is_none() {
+                    c.1 = thumbnail(&p).ok().flatten();
+                    c.0 = key;
+                }
+                c.1.clone()
+            } else {
+                eprintln!("[isle WARNING] Failed to acquire art cache lock");
+                None
             }
-            c.1.clone()
         };
         Ok(MediaState {
             active: !title.is_empty() || !artist.is_empty(),

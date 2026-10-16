@@ -16,10 +16,6 @@ pub fn start(app: AppHandle) {
     imp::start(app)
 }
 
-pub fn stop() {
-    imp::stop()
-}
-
 pub fn paste_files_from_clipboard(db: State<Db>) -> Result<usize, String> {
     imp::paste_files_from_clipboard(db.inner())
 }
@@ -65,12 +61,10 @@ mod imp {
 
     pub fn start(app: AppHandle) {
         std::thread::spawn(move || {
-            let _ = Master::new(Handler { app }).run();
+            if let Err(e) = Master::new(Handler { app }).run() {
+                eprintln!("[isle] Clipboard listener error: {}", e);
+            }
         });
-    }
-
-    pub fn stop() {
-        CLIPBOARD_ENABLED.store(false, Ordering::Relaxed);
     }
 
     pub fn is_enabled() -> bool {
@@ -159,7 +153,13 @@ mod imp {
                     // Save image to disk
                     if let Ok(dir) = app.path().app_data_dir() {
                         let images_dir = dir.join("clipboard_images");
-                        let _ = std::fs::create_dir_all(&images_dir);
+                        if let Err(e) = std::fs::create_dir_all(&images_dir) {
+                            eprintln!("[isle] Failed to create clipboard_images directory: {}", e);
+                            continue;
+                        }
+
+                        // Clean up old screenshots (keep last 50)
+                        let _ = cleanup_old_screenshots(&images_dir, 50);
 
                         let timestamp = now();
                         let filename = format!("screenshot_{}.png", timestamp);
@@ -169,18 +169,46 @@ mod imp {
                         // arboard returns ImageData with width, height, and RGBA bytes
                         let png_bytes = match image_to_png(&image) {
                             Ok(bytes) => bytes,
-                            Err(_) => continue,
+                            Err(e) => {
+                                eprintln!("[isle] Failed to convert image to PNG: {}", e);
+                                continue;
+                            }
                         };
 
-                        if std::fs::write(&filepath, &png_bytes).is_ok() {
-                            return Some(filepath.to_string_lossy().to_string());
+                        if let Err(e) = std::fs::write(&filepath, &png_bytes) {
+                            eprintln!("[isle] Failed to write screenshot: {}", e);
+                            continue;
                         }
+
+                        return Some(filepath.to_string_lossy().to_string());
                     }
                 }
             }
             std::thread::sleep(std::time::Duration::from_millis(40));
         }
         None
+    }
+
+    fn cleanup_old_screenshots(dir: &std::path::Path, max_keep: usize) -> std::io::Result<()> {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+            .collect();
+
+        // Sort by modification time (newest first)
+        entries.sort_by_key(|e| {
+            e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH)
+        });
+        entries.reverse();
+
+        // Delete old files beyond max_keep
+        for entry in entries.iter().skip(max_keep) {
+            if let Err(e) = std::fs::remove_file(entry.path()) {
+                eprintln!("[isle] Failed to delete old screenshot {}: {}", entry.path().display(), e);
+            }
+        }
+
+        Ok(())
     }
 
     fn image_to_png(image: &arboard::ImageData) -> Result<Vec<u8>, String> {

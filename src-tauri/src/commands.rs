@@ -229,6 +229,23 @@ pub fn clip_clear(db: State<Db>) -> Result<(), String> {
 /// Open a file from clipboard by path
 #[tauri::command]
 pub fn clip_open_file(path: String) -> Result<(), String> {
+    use std::path::Path;
+
+    let p = Path::new(&path);
+
+    // Validate path exists and is a file
+    if !p.exists() {
+        return Err("File does not exist".to_string());
+    }
+    if !p.is_file() {
+        return Err("Path is not a file".to_string());
+    }
+
+    // Validate path is absolute (prevent relative path traversal)
+    if !p.is_absolute() {
+        return Err("Only absolute file paths are allowed".to_string());
+    }
+
     open::that(&path).map_err(e2s)
 }
 
@@ -422,9 +439,8 @@ pub fn settings_get_all(db: State<Db>) -> Result<serde_json::Value, String> {
     })
 }
 
-/// Show (or create + show) the settings window.
-/// The window is NOT pre-created at startup — it's built lazily on first open
-/// to avoid dual-WebView2 race conditions during cold start.
+/// Show the settings window.
+/// The window is pre-created in tauri.conf.json but hidden by default.
 #[tauri::command]
 pub fn open_settings(app: AppHandle) -> Result<(), String> {
     crate::island::show_settings(&app);

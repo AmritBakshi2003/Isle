@@ -63,18 +63,16 @@ const D = {
     blur_on_battery: 'false',
     // modules
     module_media: 'true', module_calendar: 'true', module_tasks: 'true',
-    module_clipboard: 'true', module_system: 'true',
-    module_file_progress: 'true', module_download_progress: 'true',
+    module_clipboard: 'true',
     // media
     media_album_art: 'true', media_progress_ring: 'true',
-    media_controls: 'full', media_update_speed: '1000',
+    media_update_speed: '1000',
     // progress
     progress_file_copy: 'true', progress_download: 'true',
     progress_app_install: 'true', progress_battery_stretch: 'true',
     progress_ring_style: 'arc', progress_auto_dismiss: '3',
-    // performance
-    power_mode: 'balanced', ui_update_rate: '1',
-    blur_on_battery: 'true', hw_acceleration: 'true',
+    // behavior
+    blur_on_battery: 'true',
     // hotkeys
     hotkey_toggle: 'ctrl+alt+space', hotkey_settings: 'ctrl+alt+comma',
     // advanced

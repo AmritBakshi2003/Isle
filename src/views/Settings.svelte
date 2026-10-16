@@ -13,15 +13,12 @@
     click_action: 'expand', always_on_top: 'true',
     blur_on_battery: 'false', hover_expand: 'false',
     module_media: 'true', module_calendar: 'true', module_tasks: 'true',
-    module_clipboard: 'true', module_system: 'true',
-    module_file_progress: 'true', module_download_progress: 'true',
+    module_clipboard: 'true',
     media_album_art: 'true', media_progress_ring: 'true',
     media_controls: 'full', media_update_speed: '1000',
     progress_file_copy: 'true', progress_download: 'true',
     progress_app_install: 'true', progress_battery_stretch: 'true',
     progress_ring_style: 'arc', progress_auto_dismiss: '3',
-    power_mode: 'balanced', ui_update_rate: '1',
-    hw_acceleration: 'true',
     hotkey_toggle: 'ctrl+alt+space',
     log_level: 'error', log_to_file: 'false',
     single_instance_port: '47123',
@@ -39,7 +36,6 @@
     { id: 'modules',      icon: 'modules', label: 'Modules' },
     { id: 'media',        icon: 'media', label: 'Media' },
     { id: 'progress',     icon: 'progress', label: 'Live Progress' },
-    { id: 'performance',  icon: 'performance', label: 'Performance' },
     { id: 'hotkeys',      icon: 'hotkeys',  label: 'Hotkeys' },
     { id: 'advanced',     icon: 'advanced', label: 'Advanced' },
   ];
@@ -344,9 +340,6 @@
         {key:'module_calendar',        label:'Calendar & Events',      icon:'calendar'},
         {key:'module_tasks',           label:'Tasks',                  icon:'tasks'},
         {key:'module_clipboard',       label:'Clipboard History',      icon:'clips'},
-        {key:'module_system',          label:'System (Battery/Wi-Fi)', icon:'system'},
-        {key:'module_file_progress',   label:'File Copy Progress',     icon:'file_progress'},
-        {key:'module_download_progress',label:'Download Progress',     icon:'download_progress'},
       ] as m}
       <div class="module-row">
         <div class="module-info">
@@ -382,13 +375,7 @@
         </button>
       </div>
 
-      <div class="row">
-        <span class="row-label">Controls Style</span>
-        <div class="seg">
-          <button class:on={s.media_controls==='full'} onclick={()=>save('media_controls','full')}>Prev / Play / Next</button>
-          <button class:on={s.media_controls==='play_only'} onclick={()=>save('media_controls','play_only')}>Play Only</button>
-        </div>
-      </div>
+
 
       <div class="row">
         <span class="row-label">Update Speed</span>
@@ -433,53 +420,6 @@
         <span class="row-label">Auto Dismiss <span class="val">{s.progress_auto_dismiss}s after complete</span></span>
         <input type="range" min="1" max="10" value={s.progress_auto_dismiss}
                onchange={e=>save('progress_auto_dismiss',e.target.value)} />
-      </div>
-    </section>
-
-    <!-- -- PERFORMANCE -------------------------------------------------- -->
-    {:else if tab === 'performance'}
-    <section class="panel">
-      <h2>Performance</h2>
-      <p class="hint">Optimised defaults for i5-class laptops.</p>
-
-      <div class="row">
-        <span class="row-label">Power Mode</span>
-        <div class="seg">
-          {#each ['eco','balanced','performance'] as pm}
-            <button class:on={s.power_mode===pm} onclick={()=>save('power_mode',pm)}>{pm}</button>
-          {/each}
-        </div>
-      </div>
-
-      <div class="row">
-        <span class="row-label">UI Update Rate</span>
-        <div class="seg">
-          {#each [{v:'1',l:'1�/s'},{v:'2',l:'2�/s'},{v:'4',l:'4�/s'}] as r}
-            <button class:on={s.ui_update_rate===r.v} onclick={()=>save('ui_update_rate',r.v)}>{r.l}</button>
-          {/each}
-        </div>
-      </div>
-
-      <div class="row">
-        <span class="row-label">Disable Blur on Battery</span>
-        <button class="toggle" class:on={bool(s.blur_on_battery)}
-                onclick={()=>save('blur_on_battery', String(!bool(s.blur_on_battery)))}>
-          {bool(s.blur_on_battery) ? 'On' : 'Off'}
-        </button>
-      </div>
-
-      <div class="row">
-        <span class="row-label">Hardware Acceleration</span>
-        <button class="toggle" class:on={bool(s.hw_acceleration)}
-                onclick={()=>save('hw_acceleration', String(!bool(s.hw_acceleration)))}>
-          {bool(s.hw_acceleration) ? 'On' : 'Off'}
-        </button>
-      </div>
-
-      <div class="info-box">
-        <strong>Eco mode:</strong> halves UI update rate and disables blur.<br/>
-        <strong>Performance mode:</strong> enables 4�/s updates and all visual effects.<br/>
-        Changes apply after restarting Isle.
       </div>
     </section>
 
