@@ -42,6 +42,8 @@
     edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
     back: '<path d="M15 5l-7 7 7 7"/>',
     forward: '<path d="M9 5l7 7-7 7"/>',
+    utility: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h8"/>',
+    workspace: '<rect x="2" y="3" width="20" height="18" rx="2"/><path d="M4 7h6M4 11h2M4 15h4"/><circle cx="16" cy="8" r="2"/><path d="M16 12v2"/>',
   };
 </script>
 

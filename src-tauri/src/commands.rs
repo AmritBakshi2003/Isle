@@ -38,14 +38,16 @@ pub struct Task {
     done: bool,
     due: Option<i64>,
     remind_min: i64,
+    start_time: Option<i64>,
+    end_time: Option<i64>,
 }
 
 #[tauri::command]
 pub fn task_list(db: State<Db>) -> Result<Vec<Task>, String> {
     db.with(|c| {
-        let mut s = c.prepare("SELECT id,title,done,due,remind_min FROM tasks ORDER BY done, due IS NULL, due, id DESC")?;
+        let mut s = c.prepare("SELECT id,title,done,due,remind_min,start_time,end_time FROM tasks ORDER BY done, due IS NULL, due, id DESC")?;
         let rows = s.query_map([], |r| {
-            Ok(Task { id: r.get(0)?, title: r.get(1)?, done: r.get::<_, i64>(2)? != 0, due: r.get(3)?, remind_min: r.get(4)? })
+            Ok(Task { id: r.get(0)?, title: r.get(1)?, done: r.get::<_, i64>(2)? != 0, due: r.get(3)?, remind_min: r.get(4)?, start_time: r.get(5)?, end_time: r.get(6)? })
         })?;
         rows.collect()
     })
@@ -562,5 +564,26 @@ pub fn clipboard_enabled_get() -> bool {
 #[tauri::command]
 pub fn clipboard_enabled_set(enabled: bool) -> Result<(), String> {
     clipboard::set_enabled(enabled);
+    Ok(())
+}
+
+// ------------------------------------------------------ utility drawer
+
+/// Open native Windows applications
+#[tauri::command]
+pub async fn open_native(app: String) -> Result<(), String> {
+    use std::process::Command;
+    match app.as_str() {
+        "calc" => {
+            Command::new("calc.exe").spawn().map_err(|e| e.to_string())?;
+        }
+        "notepad" => {
+            Command::new("notepad.exe").spawn().map_err(|e| e.to_string())?;
+        }
+        "settings" => {
+            Command::new("ms-settings:").spawn().map_err(|e| e.to_string())?;
+        }
+        _ => return Err(format!("Unknown app: {}", app)),
+    }
     Ok(())
 }

@@ -58,6 +58,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("3", "ALTER TABLE clips ADD COLUMN file_path TEXT"),
     ("3", "ALTER TABLE clips ADD COLUMN file_name TEXT"),
     ("3", "ALTER TABLE clips ADD COLUMN file_type TEXT"),
+    // v4: Add start_time and end_time columns to tasks for unified timeline view
+    ("4", "ALTER TABLE tasks ADD COLUMN start_time INTEGER"),
+    ("4", "ALTER TABLE tasks ADD COLUMN end_time INTEGER"),
 ];
 
 impl Db {

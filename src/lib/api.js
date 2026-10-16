@@ -79,9 +79,9 @@ const D = {
     log_level: 'error',
   },
   tasks: [
-    { id: 1, title: 'Send the design review notes', done: false, due: null, remind_min: 0 },
-    { id: 2, title: 'Renew the domain', done: false, due: null, remind_min: 0 },
-    { id: 3, title: 'Book dentist', done: true, due: null, remind_min: 0 },
+    { id: 1, title: 'Send the design review notes', done: false, due: null, remind_min: 0, start_time: null, end_time: null },
+    { id: 2, title: 'Renew the domain', done: false, due: null, remind_min: 0, start_time: null, end_time: null },
+    { id: 3, title: 'Book dentist', done: true, due: null, remind_min: 0, start_time: null, end_time: null },
   ],
   events: [
     { id: 1, title: 'Standup', start: at(10, 0), end: null, remind_min: 10 },
@@ -116,8 +116,8 @@ function mock(cmd, a) {
       emit('media://update', { ...M });
       return;
     case 'task_list': return [...D.tasks].sort((x, y) => x.done - y.done || y.id - x.id);
-    case 'task_add': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: 0 }); return seq;
-    case 'task_add_with_reminder': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: a.remindMin }); return seq;
+    case 'task_add': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: 0, start_time: a.startTime ?? null, end_time: a.endTime ?? null }); return seq;
+    case 'task_add_with_reminder': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: a.remindMin, start_time: a.startTime ?? null, end_time: a.endTime ?? null }); return seq;
     case 'task_cancel_reminder': { const t = D.tasks.find((x) => x.id === a.id); if (t) t.remind_min = 0; return; }
     case 'task_toggle': { const t = D.tasks.find((x) => x.id === a.id); t.done = !t.done; return; }
     case 'task_delete': return del('tasks', a.id);
@@ -182,6 +182,7 @@ function mock(cmd, a) {
       emit('progress://clear', {});
       return;
     case 'battery_get': return { charging: false, level: 0.72 };
+    case 'open_native': console.info('[mock] open_native:', a.app); return;
     default: throw `mock: unknown command ${cmd}`;
   }
 }

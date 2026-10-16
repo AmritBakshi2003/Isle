@@ -194,6 +194,7 @@ pub fn run() {
             commands::reload_logger,
             commands::clipboard_enabled_get,
             commands::clipboard_enabled_set,
+            commands::open_native,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Isle");

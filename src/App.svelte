@@ -22,16 +22,16 @@
   import Icon from './lib/Icon.svelte';
   import Music from './views/Music.svelte';
   import Clips from './views/Clips.svelte';
-  import Tasks from './views/Tasks.svelte';
-  import Calendar from './views/Calendar.svelte';
-  import Modes from './views/Modes.svelte';
+  import TaskCalendar from './views/TaskCalendar.svelte';
+  import UtilityDrawer from './views/UtilityDrawer.svelte';
+  import Workspace from './views/Workspace.svelte';
 
   const allTabs = [
     { id: 'music', label: 'Music', icon: 'music', setting: 'module_media' },
     { id: 'clips', label: 'Clipboard', icon: 'clips', setting: 'module_clipboard' },
-    { id: 'tasks', label: 'Tasks', icon: 'tasks', setting: 'module_tasks' },
-    { id: 'calendar', label: 'Calendar', icon: 'calendar', setting: 'module_calendar' },
-    { id: 'modes', label: 'Modes', icon: 'modes', setting: null },
+    { id: 'tasks', label: 'Tasks & Calendar', icon: 'tasks', setting: 'module_tasks' },
+    { id: 'utility', label: 'Utility Drawer', icon: 'utility', setting: null },
+    { id: 'workspace', label: 'Workspace', icon: 'workspace', setting: null },
     { id: 'settings', label: 'Settings', icon: 'settings', setting: null },
   ];
   
@@ -497,9 +497,9 @@
         <section class="body">
           {#if ui.tab === 'music'}<Music />
           {:else if ui.tab === 'clips'}<Clips />
-          {:else if ui.tab === 'tasks'}<Tasks />
-          {:else if ui.tab === 'calendar'}<Calendar />
-          {:else if ui.tab === 'modes'}<Modes />
+          {:else if ui.tab === 'tasks'}<TaskCalendar />
+          {:else if ui.tab === 'utility'}<UtilityDrawer />
+          {:else if ui.tab === 'workspace'}<Workspace />
           {:else if ui.tab === 'settings'}
             <div class="settings-hint">Opening settings…</div>
           {/if}
