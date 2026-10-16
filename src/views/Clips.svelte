@@ -100,7 +100,7 @@
             <button class="icon-btn hover-only" aria-label="Delete" onclick={() => deleteFile(c)}><Icon name="trash" size={16} /></button>
           </div>
         {:else}
-          <p class="empty">No files. Drag files here or copy them in Explorer.</p>
+          <p class="empty">No files. Drag files here to add them.</p>
         {/each}
       </div>
     </div>

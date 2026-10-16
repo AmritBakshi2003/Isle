@@ -303,6 +303,10 @@
     }
   }
 
+  function togglePin() {
+    // Could add a pin feature to keep island open
+  }
+
   function openSettings() {
     console.log('Opening settings...');
     call('open_settings').then(() => {
@@ -391,8 +395,9 @@
         }
       }),
     ];
-    const onBlur = () => inTauri && !isDragging && collapse();
-    window.addEventListener('blur', onBlur);
+    // Disabled auto-collapse on blur to allow drag-and-drop from Explorer
+    // const onBlur = () => inTauri && !isDragging && collapse();
+    // window.addEventListener('blur', onBlur);
 
     const tick = () => {
       clock = fmtClock();
@@ -408,7 +413,7 @@
 
     return () => {
       offs.forEach((o) => o());
-      window.removeEventListener('blur', onBlur);
+      // window.removeEventListener('blur', onBlur);
       clearTimeout(t);
       clearTimeout(hoverTimer);
       clearTimeout(chargingIndicatorTimer);
