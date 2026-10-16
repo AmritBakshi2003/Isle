@@ -69,7 +69,6 @@
   let settingsLoaded = $state(false);
   let isHovering = $state(false);
   let showChargingIndicator = $state(false);
-  let isDragging = $state(false);
 
   // ── apply appearance + behavior settings ───────────────────────────────
   const DEFAULT_SETTINGS = {
@@ -248,13 +247,6 @@
     call('media_get').then(applyMedia);
   }
 
-  // ── drag tracking ───────────────────────────────────────────────────────
-  function handleDragStart() {
-    isDragging = true;
-  }
-  function handleDragEnd() {
-    isDragging = false;
-  }
   function collapse() {
     if (!ui.expanded) return;
     ui.expanded = false;
@@ -301,10 +293,6 @@
         collapse();
       }, 300); // Delay before collapsing when mouse leaves
     }
-  }
-
-  function togglePin() {
-    // Could add a pin feature to keep island open
   }
 
   function openSettings() {
@@ -395,9 +383,8 @@
         }
       }),
     ];
-    // Disabled auto-collapse on blur to allow drag-and-drop from Explorer
-    // const onBlur = () => inTauri && !isDragging && collapse();
-    // window.addEventListener('blur', onBlur);
+    const onBlur = () => inTauri && collapse();
+    window.addEventListener('blur', onBlur);
 
     const tick = () => {
       clock = fmtClock();
@@ -413,7 +400,7 @@
 
     return () => {
       offs.forEach((o) => o());
-      // window.removeEventListener('blur', onBlur);
+      window.removeEventListener('blur', onBlur);
       clearTimeout(t);
       clearTimeout(hoverTimer);
       clearTimeout(chargingIndicatorTimer);
@@ -421,7 +408,7 @@
   });
 </script>
 
-<svelte:window onkeydown={onKey} ondragstart={handleDragStart} ondragend={handleDragEnd} />
+<svelte:window onkeydown={onKey} />
 
 <main class="stage" style:--accent={ui.accent}>
 

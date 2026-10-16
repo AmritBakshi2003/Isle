@@ -157,6 +157,7 @@ pub fn run() {
             commands::clip_clear,
             commands::clip_open_file,
             commands::clip_delete_file,
+            commands::clip_paste_files,
             commands::mode_list,
             commands::mode_save,
             commands::mode_delete,

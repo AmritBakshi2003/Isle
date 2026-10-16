@@ -22,8 +22,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = "0.4"
 open = "5"          # open files / apps / URLs with the shell
 wallpaper = "3"     # set desktop wallpaper from a file path
-arboard = "3"       # read/write clipboard text
+arboard = { version = "3", features = ["image-data"] }  # read/write clipboard text and images
 base64 = "0.22"
+image = "0.25"      # image encoding/decoding
 
 [target.'cfg(windows)'.dependencies]
 clipboard-master = "3.1"   # event-driven clipboard listener (no polling)

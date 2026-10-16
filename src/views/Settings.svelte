@@ -137,6 +137,7 @@
     recordingKey = key;
     const handler = (e) => {
       e.preventDefault();
+      e.stopPropagation();
       const mods = [];
       if (e.ctrlKey) mods.push('ctrl');
       if (e.altKey) mods.push('alt');
@@ -145,11 +146,12 @@
       const k = e.key.toLowerCase().replace(' ', 'space');
       if (['control','alt','shift','meta'].includes(k)) return;
       const combo = [...mods, k].join('+');
+      console.log('Recording hotkey:', combo);
       save(key, combo);
       recordingKey = null;
-      window.removeEventListener('keydown', handler, true);
+      document.removeEventListener('keydown', handler, true);
     };
-    window.addEventListener('keydown', handler, true);
+    document.addEventListener('keydown', handler, true);
   }
 
   const bool = (v) => v === 'true' || v === true;

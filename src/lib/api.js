@@ -136,6 +136,7 @@ function mock(cmd, a) {
     case 'clip_clear': D.clips = D.clips.filter((c) => c.pinned); return;
     case 'clip_open_file': console.info('[mock] clip_open_file:', a.path); return;
     case 'clip_delete_file': { const idx = D.clips.findIndex((c) => c.file_path === a.path); if (idx >= 0) D.clips.splice(idx, 1); return; }
+    case 'clip_paste_files': console.info('[mock] clip_paste_files'); return 1;
     case 'mode_list': return D.modes;
     case 'mode_save':
       if (a.id) Object.assign(D.modes.find((m) => m.id === a.id), { name: a.name, icon: a.icon, actions: a.actions });

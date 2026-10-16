@@ -33,6 +33,10 @@
     return c.file_path !== null && c.file_path !== undefined;
   }
 
+  function isImage(c) {
+    return c.file_type === 'image';
+  }
+
   function getFileIcon(c) {
     const path = c.file_path?.toLowerCase() || '';
     const ext = c.file_type?.toLowerCase() || '';
@@ -52,11 +56,25 @@
     return 'file';
   }
 
+  async function openImage(c) {
+    try { await call('clip_open_file', { path: c.file_path }); toast('Opened'); } catch (e) { toast(e); }
+  }
+
   function handleDragStart(e, c) {
     if (isFile(c)) {
       e.dataTransfer.setData('text/uri-list', c.file_path);
       e.dataTransfer.setData('text/plain', c.file_path);
       e.dataTransfer.effectAllowed = 'copy';
+    }
+  }
+
+  async function pasteFromClipboard() {
+    try {
+      await call('clip_paste_files');
+      load();
+      toast('Files pasted from clipboard');
+    } catch (e) {
+      toast(e);
     }
   }
 
@@ -88,19 +106,35 @@
       </div>
     </div>
     <div class="column">
-      <div class="column-header">Files</div>
+      <div class="column-header">
+        Files
+        <button class="paste-btn" onclick={pasteFromClipboard} title="Paste files from clipboard (Ctrl+C in Explorer, then click here)">
+          <Icon name="open" size={12} /> Paste
+        </button>
+      </div>
       <div class="scroll">
         {#each fileItems as c (c.id)}
-          <div class="row file-row" draggable ondragstart={(e) => handleDragStart(e, c)}>
-            <button class="grow text" onclick={() => openFile(c)} title="Open file">
-              <span class="clamp file-name"><Icon name={getFileIcon(c)} size={14} /> {c.file_name}</span>
-              <span class="dim small">{ago(c.ts)}</span>
-            </button>
-            <button class="icon-btn hover-only" aria-label="Open" onclick={() => openFile(c)}><Icon name="open" size={16} /></button>
-            <button class="icon-btn hover-only" aria-label="Delete" onclick={() => deleteFile(c)}><Icon name="trash" size={16} /></button>
-          </div>
+          {#if isImage(c)}
+            <div class="row image-row" draggable="true" role="button" tabindex="0" aria-label={c.file_name} ondragstart={(e) => handleDragStart(e, c)}>
+              <button class="grow text" onclick={() => openImage(c)} title="Open screenshot">
+                <span class="clamp file-name"><Icon name="file-image" size={14} /> {c.file_name}</span>
+                <span class="dim small">{ago(c.ts)}</span>
+              </button>
+              <button class="icon-btn hover-only" aria-label="Open" onclick={() => openImage(c)}><Icon name="open" size={16} /></button>
+              <button class="icon-btn hover-only" aria-label="Delete" onclick={() => deleteFile(c)}><Icon name="trash" size={16} /></button>
+            </div>
+          {:else}
+            <div class="row file-row" draggable="true" role="button" tabindex="0" aria-label={c.file_name} ondragstart={(e) => handleDragStart(e, c)}>
+              <button class="grow text" onclick={() => openFile(c)} title="Open file">
+                <span class="clamp file-name"><Icon name={getFileIcon(c)} size={14} /> {c.file_name}</span>
+                <span class="dim small">{ago(c.ts)}</span>
+              </button>
+              <button class="icon-btn hover-only" aria-label="Open" onclick={() => openFile(c)}><Icon name="open" size={16} /></button>
+              <button class="icon-btn hover-only" aria-label="Delete" onclick={() => deleteFile(c)}><Icon name="trash" size={16} /></button>
+            </div>
+          {/if}
         {:else}
-          <p class="empty">No files. Drag files here to add them.</p>
+          <p class="empty">No files or screenshots. Copy files in Explorer (Ctrl+C) or take a screenshot (Win+Shift+S), then click "Paste" for files.</p>
         {/each}
       </div>
     </div>
@@ -111,7 +145,9 @@
   .top { display: flex; gap: 6px; align-items: center; }
   .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; height: calc(100% - 44px); overflow: hidden; }
   .column { display: flex; flex-direction: column; gap: 8px; height: 100%; overflow: hidden; }
-  .column-header { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255,255,255,0.5); padding: 0 4px; flex-shrink: 0; }
+  .column-header { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(255,255,255,0.5); padding: 0 4px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
+  .paste-btn { background: rgba(255,255,255,0.1); border: none; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: background 0.2s; }
+  .paste-btn:hover { background: rgba(255,255,255,0.2); }
   .scroll { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; padding-right: 4px; }
   .scroll::-webkit-scrollbar { width: 6px; }
   .scroll::-webkit-scrollbar-track { background: transparent; }
@@ -122,5 +158,6 @@
   .small { font-size: 11px; }
   .file-name { display: flex; align-items: center; gap: 6px; }
   .file-row { background: rgba(255, 255, 255, 0.03); }
+  .image-row { background: rgba(79, 70, 229, 0.1); border-left: 2px solid #6366f1; }
   .empty { font-size: 12px; color: rgba(255,255,255,0.4); text-align: center; padding: 20px 0; }
 </style>

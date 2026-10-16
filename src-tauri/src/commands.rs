@@ -238,6 +238,12 @@ pub fn clip_delete_file(db: State<Db>, path: String) -> Result<(), String> {
     db.with(|c| c.execute("DELETE FROM clips WHERE file_path=?1", [path]).map(|_| ()))
 }
 
+/// Paste files from Windows clipboard
+#[tauri::command]
+pub fn clip_paste_files(db: State<Db>) -> Result<usize, String> {
+    crate::clipboard::paste_files_from_clipboard(db)
+}
+
 // ---------------------------------------------------------------- modes
 
 #[derive(Serialize)]
