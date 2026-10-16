@@ -174,6 +174,9 @@ pub struct Clip {
     text: String, // truncated to 400 chars for the list; full text via clip_copy
     pinned: bool,
     ts: i64,
+    file_path: Option<String>,
+    file_name: Option<String>,
+    file_type: Option<String>,
 }
 
 #[tauri::command]
@@ -182,11 +185,19 @@ pub fn clip_list(db: State<Db>, query: Option<String>) -> Result<Vec<Clip>, Stri
     let like = format!("%{q}%");
     db.with(|c| {
         let mut s = c.prepare(
-            "SELECT id,substr(text,1,400),pinned,ts FROM clips WHERE text LIKE ?1
+            "SELECT id,substr(text,1,400),pinned,ts,file_path,file_name,file_type FROM clips WHERE text LIKE ?1
              ORDER BY pinned DESC, ts DESC LIMIT 100",
         )?;
         let rows = s.query_map([like], |r| {
-            Ok(Clip { id: r.get(0)?, text: r.get(1)?, pinned: r.get::<_, i64>(2)? != 0, ts: r.get(3)? })
+            Ok(Clip { 
+                id: r.get(0)?, 
+                text: r.get(1)?, 
+                pinned: r.get::<_, i64>(2)? != 0, 
+                ts: r.get(3)?,
+                file_path: r.get(4)?,
+                file_name: r.get(5)?,
+                file_type: r.get(6)?,
+            })
         })?;
         rows.collect()
     })
@@ -213,6 +224,18 @@ pub fn clip_delete(db: State<Db>, id: i64) -> Result<(), String> {
 #[tauri::command]
 pub fn clip_clear(db: State<Db>) -> Result<(), String> {
     db.with(|c| c.execute("DELETE FROM clips WHERE pinned=0", []).map(|_| ()))
+}
+
+/// Open a file from clipboard by path
+#[tauri::command]
+pub fn clip_open_file(path: String) -> Result<(), String> {
+    open::that(&path).map_err(e2s)
+}
+
+/// Delete a file from clipboard by path
+#[tauri::command]
+pub fn clip_delete_file(db: State<Db>, path: String) -> Result<(), String> {
+    db.with(|c| c.execute("DELETE FROM clips WHERE file_path=?1", [path]).map(|_| ()))
 }
 
 // ---------------------------------------------------------------- modes

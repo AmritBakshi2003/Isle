@@ -69,6 +69,7 @@
   let settingsLoaded = $state(false);
   let isHovering = $state(false);
   let showChargingIndicator = $state(false);
+  let isDragging = $state(false);
 
   // ── apply appearance + behavior settings ───────────────────────────────
   const DEFAULT_SETTINGS = {
@@ -246,6 +247,14 @@
     ui.expanded = true;
     call('media_get').then(applyMedia);
   }
+
+  // ── drag tracking ───────────────────────────────────────────────────────
+  function handleDragStart() {
+    isDragging = true;
+  }
+  function handleDragEnd() {
+    isDragging = false;
+  }
   function collapse() {
     if (!ui.expanded) return;
     ui.expanded = false;
@@ -382,7 +391,7 @@
         }
       }),
     ];
-    const onBlur = () => inTauri && collapse();
+    const onBlur = () => inTauri && !isDragging && collapse();
     window.addEventListener('blur', onBlur);
 
     const tick = () => {
@@ -407,7 +416,7 @@
   });
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} ondragstart={handleDragStart} ondragend={handleDragEnd} />
 
 <main class="stage" style:--accent={ui.accent}>
 

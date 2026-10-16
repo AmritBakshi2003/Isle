@@ -29,7 +29,8 @@ const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS clips(
   id INTEGER PRIMARY KEY, text TEXT NOT NULL UNIQUE,
-  pinned INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL);
+  pinned INTEGER NOT NULL DEFAULT 0, ts INTEGER NOT NULL,
+  file_path TEXT, file_name TEXT, file_type TEXT);
 CREATE TABLE IF NOT EXISTS tasks(
   id INTEGER PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
   due INTEGER, created INTEGER NOT NULL, toast_id TEXT, remind_min INTEGER DEFAULT 0);
@@ -53,6 +54,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("1", "ALTER TABLE tasks ADD COLUMN remind_min INTEGER DEFAULT 0"),
     // v2: Fix transparent bg_color values in settings
     ("2", "UPDATE settings SET v='rgba(26, 26, 26, 0.95)' WHERE k='bg_color' AND v LIKE '%, 0)'"),
+    // v3: Add file columns to clips table for drag-drop file support
+    ("3", "ALTER TABLE clips ADD COLUMN file_path TEXT"),
+    ("3", "ALTER TABLE clips ADD COLUMN file_name TEXT"),
+    ("3", "ALTER TABLE clips ADD COLUMN file_type TEXT"),
 ];
 
 impl Db {

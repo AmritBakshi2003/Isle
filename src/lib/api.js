@@ -91,9 +91,10 @@ const D = {
     { id: 3, title: 'Lunch with Asha', start: at(13, 0, 2), end: null, remind_min: 30 },
   ],
   clips: [
-    { id: 1, text: 'https://tauri.app/start/', pinned: true, ts: sec() - 4000 },
-    { id: 2, text: 'SELECT * FROM events WHERE starts > strftime(\'%s\',\'now\');', pinned: false, ts: sec() - 600 },
-    { id: 3, text: 'Meeting moved to 3:30, same room.', pinned: false, ts: sec() - 90 },
+    { id: 1, text: 'https://tauri.app/start/', pinned: true, ts: sec() - 4000, file_path: null, file_name: null, file_type: null },
+    { id: 2, text: 'SELECT * FROM events WHERE starts > strftime(\'%s\',\'now\');', pinned: false, ts: sec() - 600, file_path: null, file_name: null, file_type: null },
+    { id: 3, text: 'Meeting moved to 3:30, same room.', pinned: false, ts: sec() - 90, file_path: null, file_name: null, file_type: null },
+    { id: 4, text: 'document.pdf', pinned: false, ts: sec() - 10, file_path: '/tmp/document.pdf', file_name: 'document.pdf', file_type: 'pdf' },
   ],
   modes: [
     { id: 1, name: 'Focus', icon: '🎯', actions: [{ type: 'notify', title: 'Focus on', body: 'One thing at a time.' }] },
@@ -133,6 +134,8 @@ function mock(cmd, a) {
     case 'clip_pin': { const c = D.clips.find((x) => x.id === a.id); c.pinned = !c.pinned; return; }
     case 'clip_delete': return del('clips', a.id);
     case 'clip_clear': D.clips = D.clips.filter((c) => c.pinned); return;
+    case 'clip_open_file': console.info('[mock] clip_open_file:', a.path); return;
+    case 'clip_delete_file': { const idx = D.clips.findIndex((c) => c.file_path === a.path); if (idx >= 0) D.clips.splice(idx, 1); return; }
     case 'mode_list': return D.modes;
     case 'mode_save':
       if (a.id) Object.assign(D.modes.find((m) => m.id === a.id), { name: a.name, icon: a.icon, actions: a.actions });

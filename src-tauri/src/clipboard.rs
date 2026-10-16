@@ -1,4 +1,4 @@
-//! Clipboard history (text only for now).
+//! Clipboard history (text + files).
 //!
 //! EVENT-DRIVEN: `clipboard-master` blocks on the Win32 clipboard-format
 //! listener, so this thread uses ~0 CPU until the clipboard actually changes.
@@ -8,7 +8,7 @@
 //! Entries are capped at 20k chars; only the newest 300 unpinned items are kept.
 //!
 //! UI contract: event `clipboard://changed` (no payload); commands in commands.rs.
-//! TODO(agents): image history (store small PNG thumbnails + hash), file lists.
+//! TODO(agents): image history (store small PNG thumbnails + hash).
 
 use tauri::AppHandle;
 
@@ -38,6 +38,7 @@ mod imp {
         Win32::System::DataExchange::{IsClipboardFormatAvailable, RegisterClipboardFormatW},
     };
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::process::Command;
 
     static CLIPBOARD_ENABLED: AtomicBool = AtomicBool::new(true);
 
@@ -95,30 +96,104 @@ mod imp {
         None
     }
 
+    const CF_HDROP: u32 = 15;
+
+    fn has_files() -> bool {
+        unsafe {
+            IsClipboardFormatAvailable(CF_HDROP).is_ok()
+        }
+    }
+
+    fn read_files_via_powershell() -> Vec<String> {
+        // Use PowerShell to read file paths from clipboard (hidden window)
+        match Command::new("powershell")
+            .args([
+                "-WindowStyle",
+                "Hidden",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetFileDropList() | ForEach-Object { $_ }"
+            ])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output()
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.lines()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            }
+            Err(_) => Vec::new(),
+        }
+    }
+
     fn capture(app: &AppHandle) {
         if excluded() {
             return;
         }
-        let Some(text) = read_text() else { return };
-        let t = text.trim_end();
-        if t.trim().is_empty() || t.len() > 20_000 {
-            return;
-        }
+
         let db = app.state::<Db>();
-        let _ = db.with(|c| {
-            c.execute(
-                "INSERT INTO clips(text,pinned,ts) VALUES(?1,0,?2)
-                 ON CONFLICT(text) DO UPDATE SET ts=excluded.ts",
-                rusqlite::params![t, now()],
-            )?;
-            c.execute(
-                "DELETE FROM clips WHERE pinned=0 AND id NOT IN
-                 (SELECT id FROM clips WHERE pinned=0 ORDER BY ts DESC LIMIT 300)",
-                [],
-            )?;
-            Ok(())
-        });
-        let _ = app.emit("clipboard://changed", ());
+        let mut captured = false;
+
+        // Check for files first (Windows Explorer file copy)
+        if has_files() {
+            let files = read_files_via_powershell();
+            if !files.is_empty() {
+                for file_path in files {
+                    let path = std::path::Path::new(&file_path);
+                    let file_name = path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&file_path)
+                        .to_string();
+                    let file_type = path.extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    let _ = db.with(|c| {
+                        c.execute(
+                            "INSERT INTO clips(text,pinned,ts,file_path,file_name,file_type) VALUES(?1,0,?2,?3,?4,?5)",
+                            rusqlite::params![&file_name, now(), &file_path, &file_name, &file_type],
+                        )?;
+                        Ok::<_, rusqlite::Error>(())
+                    });
+                    captured = true;
+                }
+            }
+        }
+
+        // If no files, capture text
+        if !captured {
+            let Some(text) = read_text() else { return };
+            let t = text.trim_end();
+            if t.trim().is_empty() || t.len() > 20_000 {
+                return;
+            }
+            let _ = db.with(|c| {
+                c.execute(
+                    "INSERT INTO clips(text,pinned,ts) VALUES(?1,0,?2)
+                     ON CONFLICT(text) DO UPDATE SET ts=excluded.ts",
+                    rusqlite::params![t, now()],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            });
+            captured = true;
+        }
+
+        if captured {
+            // Clean up old unpinned items
+            let _ = db.with(|c| {
+                c.execute(
+                    "DELETE FROM clips WHERE pinned=0 AND id NOT IN
+                     (SELECT id FROM clips WHERE pinned=0 ORDER BY ts DESC LIMIT 300)",
+                    [],
+                )?;
+                Ok(())
+            });
+            let _ = app.emit("clipboard://changed", ());
+        }
     }
 }
 
