@@ -60,7 +60,9 @@ let toastTimer;
 export function toast(msg, ms = 1800) {
   ui.toast = String(msg);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (ui.toast = ''), ms);
+  toastTimer = setTimeout(() => {
+    ui.toast = '';
+  }, ms);
 }
 
 /** Pick a vivid colour from the album art for the accent (12x12 downsample). */

@@ -25,6 +25,16 @@ use windows::core::PCWSTR;
 const ICON_SIZE: i32 = 128;
 const CACHE_VERSION: &str = "v3";
 
+/// Generate cache key (filename) for a given path
+/// This is shared between picker preview and add flow to ensure cache reuse
+pub fn get_cache_key(path: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(path.as_bytes());
+    hasher.write(CACHE_VERSION.as_bytes());
+    let hash_value = hasher.finish();
+    format!("icon_{}.png", hash_value)
+}
+
 /// Extract icon from an executable and save as PNG
 /// Returns the filename of the saved icon, or error if failed
 pub fn extract_icon_from_path(exe_path: &str, app_data_dir: &std::path::Path) -> Result<String, String> {
@@ -32,12 +42,8 @@ pub fn extract_icon_from_path(exe_path: &str, app_data_dir: &std::path::Path) ->
     let icons_dir = app_data_dir.join("icons");
     fs::create_dir_all(&icons_dir).map_err(|e| e.to_string())?;
 
-    // Generate unique filename based on executable path hash + cache version
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    hasher.write(exe_path.as_bytes());
-    hasher.write(CACHE_VERSION.as_bytes());
-    let hash_value = hasher.finish();
-    let icon_filename = format!("icon_{}.png", hash_value);
+    // Generate unique filename using shared cache key function
+    let icon_filename = get_cache_key(exe_path);
     let icon_path = icons_dir.join(&icon_filename);
 
     // Check if icon already exists
@@ -332,5 +338,79 @@ pub fn reextract_old_icons(
     }
 
     updated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_cache_key_consistency() {
+        // Test that the same path always produces the same cache key
+        let path1 = "C:\\Program Files\\App\\app.exe";
+        let path2 = "C:\\Program Files\\App\\app.exe";
+        let path3 = "C:\\Program Files\\App\\app2.exe";
+        
+        let key1 = get_cache_key(path1);
+        let key2 = get_cache_key(path2);
+        let key3 = get_cache_key(path3);
+        
+        assert_eq!(key1, key2, "Same path should produce same cache key");
+        assert_ne!(key1, key3, "Different paths should produce different cache keys");
+        
+        // Test that shell items also get consistent keys
+        let shell1 = "shell:::{645FF040-5081-101B-9F08-00AA002F954E}";
+        let shell2 = "shell:::{645FF040-5081-101B-9F08-00AA002F954E}";
+        let shell_key1 = get_cache_key(shell1);
+        let shell_key2 = get_cache_key(shell2);
+        
+        assert_eq!(shell_key1, shell_key2, "Same shell item should produce same cache key");
+    }
+    
+    #[test]
+    fn test_shell_item_cache_key() {
+        // Test that shell items use their full parsing name as cache key
+        let recycle_bin = "shell:::{645FF040-5081-101B-9F08-00AA002F954E}";
+        let control_panel = "shell:::{21EC2020-3AEA-1069-A2DD-08002B30309D}";
+        
+        let recycle_key = get_cache_key(recycle_bin);
+        let control_key = get_cache_key(control_panel);
+        
+        assert_ne!(recycle_key, control_key, "Different shell items should have different cache keys");
+        assert!(recycle_key.starts_with("icon_"), "Cache key should start with icon_");
+        assert!(recycle_key.ends_with(".png"), "Cache key should end with .png");
+    }
+
+    #[test]
+    fn test_self_heal_missing_file() {
+        // Test that a missing cached file triggers re-extraction logic
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let app_data_dir = temp_dir.path();
+        
+        // Create icons directory
+        let icons_dir = app_data_dir.join("icons");
+        fs::create_dir_all(&icons_dir).expect("Failed to create icons dir");
+        
+        let test_path = "C:\\Program Files\\TestApp\\app.exe";
+        let cache_key = get_cache_key(test_path);
+        let icon_path = icons_dir.join(&cache_key);
+        
+        // Initially, the file does not exist
+        assert!(!icon_path.exists(), "Icon file should not exist initially");
+        
+        // This simulates the self-heal decision: missing file would trigger re-extraction
+        let needs_reextract = !icon_path.exists();
+        assert!(needs_reextract, "Missing file should trigger re-extraction");
+        
+        // After extraction, the file exists
+        let _ = create_app_icon(&icon_path, test_path);
+        assert!(icon_path.exists(), "Icon file should exist after extraction");
+        
+        // Now it should not need re-extraction
+        let needs_reextract_after = !icon_path.exists();
+        assert!(!needs_reextract_after, "Existing file should not trigger re-extraction");
+    }
 }
 

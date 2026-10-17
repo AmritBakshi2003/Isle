@@ -2238,6 +2238,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-notification",
+ "tempfile",
  "wallpaper",
  "windows 0.58.0",
 ]

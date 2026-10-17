@@ -26,6 +26,9 @@ arboard = { version = "3", features = ["image-data"] }  # read/write clipboard t
 base64 = "0.22"
 image = "0.25"      # image encoding/decoding
 
+[dev-dependencies]
+tempfile = "3"
+
 [target.'cfg(windows)'.dependencies]
 clipboard-master = "3.1"   # event-driven clipboard listener (no polling)
 windows = { version = "0.58", features = [

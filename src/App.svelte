@@ -504,7 +504,7 @@
             <div class="settings-hint">Opening settings…</div>
           {/if}
         </section>
-        {#if ui.toast}<div class="toast" in:fade={{ duration: 120 }} out:fade={{ duration: 160 }}>{ui.toast}</div>{/if}
+        {#if ui.toast}<div class="toast" class:toast-top={ui.toastPosition === 'top'} in:fade={{ duration: 120 }} out:fade={{ duration: 160 }}>{ui.toast}</div>{/if}
       </div>
     {/if}
   </div>
@@ -631,5 +631,6 @@
     font-size: 13px;
   }
   .toast { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); background: #fff; color: #111; font-weight: 600;
-    padding: 6px 12px; border-radius: 999px; max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+    padding: 6px 12px; border-radius: 999px; max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; z-index: 2000; }
+  .toast.toast-top { bottom: auto; top: 16px; }
 </style>

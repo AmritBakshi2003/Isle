@@ -624,7 +624,7 @@ pub fn app_shortcuts_list(db: State<Db>) -> Result<Vec<apps::AppShortcut>, Strin
 /// Add an app shortcut
 #[tauri::command]
 pub fn app_shortcut_add(app: AppHandle, db: State<Db>, name: String, path: String, icon: Option<String>, target: Option<String>, folder_group: Option<String>, hidden: Option<bool>) -> Result<i64, String> {
-    // Extract icon from the resolved target executable (not the .lnk)
+    // Extract icon from the icon path (or fallback to path)
     let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
     let icon_target = icon.as_ref().unwrap_or(&path);
     let icon_filename = match icon::extract_icon_from_path(icon_target, &app_data_dir) {
@@ -641,6 +641,13 @@ pub fn app_shortcut_add(app: AppHandle, db: State<Db>, name: String, path: Strin
             params![name, path, icon, icon_filename, target, folder_group, hidden.unwrap_or(false)],
         )?;
         Ok(c.last_insert_rowid())
+    }).map_err(|e| {
+        // Check for UNIQUE constraint violation (path already exists)
+        if e.to_string().contains("UNIQUE constraint failed") {
+            format!("{} is already added", name)
+        } else {
+            e.to_string()
+        }
     })
 }
 
@@ -692,13 +699,121 @@ pub async fn app_shortcut_launch(path: String) -> Result<(), String> {
 
 /// Get icon file URL for a shortcut
 #[tauri::command]
-pub fn app_shortcut_icon(app: AppHandle, icon_filename: String) -> Result<String, String> {
-    if icon_filename.is_empty() {
-        return Ok(String::new());
-    }
+pub fn app_shortcut_icon(app: AppHandle, db: State<Db>, icon_filename: String, id: Option<i64>) -> Result<String, String> {
     let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
-    let icon_path = app_data_dir.join("icons").join(&icon_filename);
+    
+    // If icon_filename is empty, trigger self-heal immediately
+    if icon_filename.is_empty() {
+        eprintln!("[icon] icon_filename is empty, triggering self-heal");
+        if let Some(shortcut_id) = id {
+            let (icon_opt, path): (Option<String>, Option<String>) = db.with(|c| {
+                c.query_row(
+                    "SELECT icon, path FROM app_shortcuts WHERE id=?1",
+                    [shortcut_id],
+                    |r| Ok((r.get(0)?, r.get(1)?))
+                )
+            }).map_err(|e| {
+                eprintln!("[icon] Self-heal failed to query database: {}", e);
+                format!("Failed to query database: {}", e)
+            })?;
+            
+            let path = path.unwrap_or_default();
+            if path.is_empty() {
+                eprintln!("[icon] Self-heal failed: path is empty for id={}", shortcut_id);
+                return Err("Shortcut has no path".to_string());
+            }
 
+            let icon_target = icon_opt.as_ref().unwrap_or(&path);
+            eprintln!("[icon] Self-heal: attempting re-extraction for id={}, path={}", shortcut_id, icon_target);
+            
+            match icon::extract_icon_from_path(icon_target, &app_data_dir) {
+                Ok(new_filename) => {
+                    eprintln!("[icon] Self-heal: re-extracted icon for id={}, path={}, new_filename={}", shortcut_id, icon_target, new_filename);
+                    
+                    // Update database with new filename
+                    let _ = db.with(|c| {
+                        c.execute(
+                            "UPDATE app_shortcuts SET icon_filename=?1 WHERE id=?2",
+                            params![&new_filename, shortcut_id]
+                        )
+                    }).map_err(|e| eprintln!("[icon] Failed to update icon_filename in database: {}", e));
+                    
+                    // Read the new file and return data URL
+                    let new_icon_path = app_data_dir.join("icons").join(&new_filename);
+                    let png_data = std::fs::read(&new_icon_path).map_err(|e| format!("Failed to read re-extracted icon: {}", e))?;
+                    let base64 = base64::engine::general_purpose::STANDARD.encode(&png_data);
+                    return Ok(format!("data:image/png;base64,{}", base64));
+                }
+                Err(e) => {
+                    eprintln!("[icon] Self-heal failed for id={}, path={}: {}", shortcut_id, icon_target, e);
+                    return Err(format!("Icon extraction failed: {}", e));
+                }
+            }
+        } else {
+            eprintln!("[icon] No id provided for empty icon_filename");
+            return Err("Icon filename is empty and no id for self-heal".to_string());
+        }
+    }
+    
+    let icon_path = app_data_dir.join("icons").join(&icon_filename);
+    
+    // Check if cached file exists
+    if !icon_path.exists() {
+        eprintln!("[icon] Cache miss: file does not exist for icon_filename={}", icon_filename);
+        
+        // Self-heal: try to re-extract icon from stored icon/path
+        if let Some(shortcut_id) = id {
+            let (icon_opt, path): (Option<String>, Option<String>) = db.with(|c| {
+                c.query_row(
+                    "SELECT icon, path FROM app_shortcuts WHERE id=?1",
+                    [shortcut_id],
+                    |r| Ok((r.get(0)?, r.get(1)?))
+                )
+            }).map_err(|e| {
+                eprintln!("[icon] Self-heal failed to query database: {}", e);
+                format!("Failed to query database: {}", e)
+            })?;
+            
+            let path = path.unwrap_or_default();
+            if path.is_empty() {
+                eprintln!("[icon] Self-heal failed: path is empty for id={}", shortcut_id);
+                return Err("Shortcut has no path".to_string());
+            }
+
+            let icon_target = icon_opt.as_ref().unwrap_or(&path);
+            eprintln!("[icon] Self-heal: attempting re-extraction for id={}, path={}", shortcut_id, icon_target);
+            
+            match icon::extract_icon_from_path(icon_target, &app_data_dir) {
+                Ok(new_filename) => {
+                    eprintln!("[icon] Self-heal: re-extracted icon for id={}, path={}, new_filename={}", shortcut_id, icon_target, new_filename);
+                    
+                    // Update database with new filename
+                    let _ = db.with(|c| {
+                        c.execute(
+                            "UPDATE app_shortcuts SET icon_filename=?1 WHERE id=?2",
+                            params![&new_filename, shortcut_id]
+                        )
+                    }).map_err(|e| eprintln!("[icon] Failed to update icon_filename in database: {}", e));
+                    
+                    // Read the new file and return data URL
+                    let new_icon_path = app_data_dir.join("icons").join(&new_filename);
+                    let png_data = std::fs::read(&new_icon_path).map_err(|e| format!("Failed to read re-extracted icon: {}", e))?;
+                    let base64 = base64::engine::general_purpose::STANDARD.encode(&png_data);
+                    return Ok(format!("data:image/png;base64,{}", base64));
+                }
+                Err(e) => {
+                    eprintln!("[icon] Self-heal failed for id={}, path={}: {}", shortcut_id, icon_target, e);
+                    return Err(format!("Icon extraction failed: {}", e));
+                }
+            }
+        } else {
+            eprintln!("[icon] No id provided, cannot self-heal missing file for icon_filename={}", icon_filename);
+            return Err("Icon file not found and no id for self-heal".to_string());
+        }
+    } else {
+        eprintln!("[icon] Serving from cache: icon_filename={}", icon_filename);
+    }
+    
     // Read PNG file and convert to base64 data URI
     let png_data = std::fs::read(&icon_path).map_err(|e| format!("Failed to read icon: {}", e))?;
     let base64 = base64::engine::general_purpose::STANDARD.encode(&png_data);
@@ -753,5 +868,11 @@ pub fn reextract_old_icons(app: AppHandle, db: State<Db>) -> Result<(), String> 
 #[tauri::command]
 pub fn extract_app_icon(app: AppHandle, path: String) -> Result<String, String> {
     let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
-    icon::extract_icon_from_path(&path, &app_data_dir)
+    let icon_filename = icon::extract_icon_from_path(&path, &app_data_dir)?;
+    
+    // Read the PNG file and convert to base64 data URI
+    let icon_path = app_data_dir.join("icons").join(&icon_filename);
+    let png_data = std::fs::read(&icon_path).map_err(|e| format!("Failed to read icon: {}", e))?;
+    let base64 = base64::engine::general_purpose::STANDARD.encode(&png_data);
+    Ok(format!("data:image/png;base64,{}", base64))
 }

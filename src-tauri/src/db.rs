@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS routines(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, trig TEXT NOT NULL, actions TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS app_shortcuts(
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, icon_filename TEXT);
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, icon TEXT, icon_filename TEXT, target TEXT, folder_group TEXT, hidden INTEGER DEFAULT 0);
 ";
 
 /// Migration steps to evolve the schema without breaking existing databases.
@@ -72,8 +72,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     // v8: Clear icon filenames again to force regeneration with native Windows icon extraction
     ("8", "UPDATE app_shortcuts SET icon_filename = NULL"),
     // v9: Add icon column to store resolved target path for icon extraction
+    // Note: Column now in base SCHEMA, this migration only for legacy databases
     ("9", "ALTER TABLE app_shortcuts ADD COLUMN icon TEXT"),
     // v10: Add target, folder_group, and hidden columns for app picker filtering
+    // Note: Columns now in base SCHEMA, these migrations only for legacy databases
     ("10", "ALTER TABLE app_shortcuts ADD COLUMN target TEXT"),
     ("10", "ALTER TABLE app_shortcuts ADD COLUMN folder_group TEXT"),
     ("10", "ALTER TABLE app_shortcuts ADD COLUMN hidden INTEGER DEFAULT 0"),
@@ -116,6 +118,41 @@ fn run_migrations(c: &Connection) -> rusqlite::Result<()> {
     c.execute("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER PRIMARY KEY)", [])?;
     let current_version: i64 = c.query_row("SELECT COALESCE(MAX(version), 0) FROM schema_version", [], |r| r.get(0))?;
     
+    // Special case: Check if app_shortcuts table exists and is missing columns (old schema)
+    // This handles databases created before v9/v10 migrations
+    let table_exists: bool = c.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='app_shortcuts'",
+        [],
+        |r| r.get::<_, i64>(0)
+    ).map(|count| count > 0).unwrap_or(false);
+    
+    if table_exists {
+        // Check for missing columns using PRAGMA table_info
+        let check_column = |col_name: &str| -> bool {
+            c.prepare(&format!("SELECT COUNT(*) FROM pragma_table_info('app_shortcuts') WHERE name='{}'", col_name))
+                .and_then(|mut stmt| stmt.query_row([], |r| r.get::<_, i64>(0)))
+                .map(|count| count == 0)
+                .unwrap_or(false)
+        };
+        
+        if check_column("icon") {
+            let _ = c.execute("ALTER TABLE app_shortcuts ADD COLUMN icon TEXT", []);
+            eprintln!("Migration: Added 'icon' column to app_shortcuts");
+        }
+        if check_column("target") {
+            let _ = c.execute("ALTER TABLE app_shortcuts ADD COLUMN target TEXT", []);
+            eprintln!("Migration: Added 'target' column to app_shortcuts");
+        }
+        if check_column("folder_group") {
+            let _ = c.execute("ALTER TABLE app_shortcuts ADD COLUMN folder_group TEXT", []);
+            eprintln!("Migration: Added 'folder_group' column to app_shortcuts");
+        }
+        if check_column("hidden") {
+            let _ = c.execute("ALTER TABLE app_shortcuts ADD COLUMN hidden INTEGER DEFAULT 0", []);
+            eprintln!("Migration: Added 'hidden' column to app_shortcuts");
+        }
+    }
+    
     for (version, sql) in MIGRATIONS {
         let v: i64 = version.parse().unwrap();
         if v > current_version {
@@ -143,4 +180,81 @@ fn seed(c: &Connection) -> rusqlite::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    
+    #[test]
+    fn test_migration_adds_missing_columns() {
+        // Create an in-memory database with old 4-column schema
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("
+            CREATE TABLE app_shortcuts(
+              id INTEGER PRIMARY KEY, 
+              name TEXT NOT NULL, 
+              path TEXT NOT NULL UNIQUE, 
+              icon_filename TEXT
+            );
+        ").unwrap();
+        
+        // Run migrations
+        run_migrations(&c).unwrap();
+        
+        // Check that new columns exist
+        let check_column = |col_name: &str| -> bool {
+            c.prepare(&format!("SELECT COUNT(*) FROM pragma_table_info('app_shortcuts') WHERE name='{}'", col_name))
+                .and_then(|mut stmt| stmt.query_row([], |r| r.get::<_, i64>(0)))
+                .map(|count| count > 0)
+                .unwrap_or(false)
+        };
+        
+        assert!(check_column("icon"), "icon column should exist");
+        assert!(check_column("target"), "target column should exist");
+        assert!(check_column("folder_group"), "folder_group column should exist");
+        assert!(check_column("hidden"), "hidden column should exist");
+        
+        // Test insert with all columns
+        c.execute(
+            "INSERT INTO app_shortcuts(name,path,icon,icon_filename,target,folder_group,hidden) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params!["Test App", "C:\\test.exe", "C:\\test.exe", "icon_v3_123.png", "C:\\test.exe", "Test Group", 0],
+        ).unwrap();
+        
+        // Test select
+        let name: String = c.query_row("SELECT name FROM app_shortcuts WHERE name=?1", ["Test App"], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Test App");
+    }
+    
+    #[test]
+    fn test_migration_with_icon_column_already_present() {
+        // Create an in-memory database with schema that has icon but not the other columns
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("
+            CREATE TABLE app_shortcuts(
+              id INTEGER PRIMARY KEY, 
+              name TEXT NOT NULL, 
+              path TEXT NOT NULL UNIQUE, 
+              icon TEXT,
+              icon_filename TEXT
+            );
+        ").unwrap();
+        
+        // Run migrations
+        run_migrations(&c).unwrap();
+        
+        // Check that missing columns were added
+        let check_column = |col_name: &str| -> bool {
+            c.prepare(&format!("SELECT COUNT(*) FROM pragma_table_info('app_shortcuts') WHERE name='{}'", col_name))
+                .and_then(|mut stmt| stmt.query_row([], |r| r.get::<_, i64>(0)))
+                .map(|count| count > 0)
+                .unwrap_or(false)
+        };
+        
+        assert!(check_column("icon"), "icon column should still exist");
+        assert!(check_column("target"), "target column should exist");
+        assert!(check_column("folder_group"), "folder_group column should exist");
+        assert!(check_column("hidden"), "hidden column should exist");
+    }
 }

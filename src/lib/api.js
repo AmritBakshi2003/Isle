@@ -187,18 +187,11 @@ function mock(cmd, a) {
       { id: null, name: 'Google Chrome', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon_filename: null, target: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', group: null, hidden: false },
       { id: null, name: 'Visual Studio Code', path: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon_filename: null, target: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', group: null, hidden: false },
       { id: null, name: 'Spotify', path: 'C:\\Program Files\\Spotify\\Spotify.exe', icon: 'C:\\Program Files\\Spotify\\Spotify.exe', icon_filename: null, target: 'C:\\Program Files\\Spotify\\Spotify.exe', group: null, hidden: false },
-      { id: null, name: 'File Explorer', path: 'C:\\Windows\\explorer.lnk', icon: 'C:\\Windows\\explorer.lnk', icon_filename: null, target: 'C:\\Windows\\explorer.exe', group: 'System Tools', hidden: false },
-      { id: null, name: 'Control Panel', path: 'C:\\Windows\\control.lnk', icon: 'C:\\Windows\\control.lnk', icon_filename: null, target: 'C:\\Windows\\System32\\control.exe', group: 'Windows System', hidden: false },
-      { id: null, name: 'Task Manager', path: 'C:\\Windows\\taskmgr.lnk', icon: 'C:\\Windows\\taskmgr.lnk', icon_filename: null, target: 'C:\\Windows\\System32\\taskmgr.exe', group: 'System Tools', hidden: false },
-      { id: null, name: 'Command Prompt', path: 'C:\\Windows\\cmd.lnk', icon: 'C:\\Windows\\cmd.lnk', icon_filename: null, target: 'C:\\Windows\\System32\\cmd.exe', group: 'Windows System', hidden: false },
-      { id: null, name: 'Zoom', path: 'C:\\Program Files\\Zoom\\bin\\Zoom.lnk', icon: 'C:\\Program Files\\Zoom\\bin\\Zoom.lnk', icon_filename: null, target: 'C:\\Program Files\\Zoom\\bin\\Zoom.lnk', group: null, hidden: false },
-      { id: null, name: 'Git Bash', path: 'C:\\Program Files\\Git\\Git Bash.lnk', icon: 'C:\\Program Files\\Git\\Git Bash.lnk', icon_filename: null, target: 'C:\\Program Files\\Git\\Git Bash.lnk', group: 'Git', hidden: false },
-      { id: null, name: 'Word', path: 'C:\\Program Files\\Office\\Word.lnk', icon: 'C:\\Program Files\\Office\\Word.lnk', icon_filename: null, target: 'C:\\Program Files\\Office\\Word.lnk', group: 'Microsoft Office', hidden: false },
     ];
     case 'app_shortcuts_list': return D.appShortcuts || [];
     case 'app_shortcut_add': {
       if (!D.appShortcuts) D.appShortcuts = [];
-      D.appShortcuts.push({ id: ++seq, name: a.name, path: a.path, icon: a.icon, icon_filename: null, target: a.target, group: a.folder_group, hidden: a.hidden });
+      D.appShortcuts.push({ id: ++seq, name: a.name, path: a.path, icon: a.icon, icon_filename: null });
       return seq;
     }
     case 'app_shortcut_remove': {
@@ -206,11 +199,19 @@ function mock(cmd, a) {
       return;
     }
     case 'app_shortcut_launch': console.info('[mock] app_shortcut_launch:', a.path); return;
-    case 'app_shortcut_icon': return '';
+    case 'app_shortcut_icon': {
+      // Handle updated signature: iconFilename (required) and id (optional for self-heal)
+      if (a.iconFilename) {
+        console.info('[mock] app_shortcut_icon: iconFilename=', a.iconFilename, 'id=', a.id);
+        return 'data:image/png;base64,';  // Mock base64 PNG
+      }
+      console.info('[mock] app_shortcut_icon called without iconFilename');
+      return 'data:image/png;base64,';
+    }
     case 'clear_all_icons': console.info('[mock] clear_all_icons'); return;
     case 'regenerate_shortcut_icon': console.info('[mock] regenerate_shortcut_icon'); return;
     case 'reextract_old_icons': console.info('[mock] reextract_old_icons'); return;
-    case 'extract_app_icon': console.info('[mock] extract_app_icon:', a.path); return 'data:image/png;base64,';
+    case 'extract_app_icon': console.info('[mock] extract_app_icon:', a.path); return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
     default: throw `mock: unknown command ${cmd}`;
   }
 }

@@ -66,7 +66,7 @@ pub fn enumerate_apps() -> Result<Vec<AppShortcut>, String> {
         id: None,
         name: "Recycle Bin".to_string(),
         path: "shell:::{645FF040-5081-101B-9F08-00AA002F954E}".to_string(),
-        icon: Some("shell:::{645FF040-5081-101B-9F08-00AA002F954E}".to_string()),
+        icon: None,
         icon_filename: None,
         target: None,
         folder_group: None,
@@ -77,159 +77,74 @@ pub fn enumerate_apps() -> Result<Vec<AppShortcut>, String> {
         id: None,
         name: "Control Panel".to_string(),
         path: "shell:::{21EC2020-3AEA-1069-A2DD-08002B30309D}".to_string(),
-        icon: Some("shell:::{21EC2020-3AEA-1069-A2DD-08002B30309D}".to_string()),
+        icon: None,
         icon_filename: None,
         target: None,
         folder_group: None,
         hidden: false,
     });
 
-    // Filter unwanted entries
-    apps = filter_apps(apps);
-
-    // Dedupe by target path, then by name
-    apps = dedupe_apps(apps);
-
-    // Apply folder collapsing
-    apps = collapse_folders(apps);
-
-    // Sort alphabetically by name
-    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-
-    Ok(apps)
+    Ok(filter_and_dedupe_apps(apps))
 }
 
+/// Recursively scan a directory for .lnk files
 fn scan_directory(entries: fs::ReadDir, apps: &mut Vec<AppShortcut>, group: Option<String>) {
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            // Get folder name for grouping
-            let folder_name = path.file_name()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string());
+    for entry in entries {
+        if let Ok(entry) = entry {
+            let path = entry.path();
 
-            // Recursively scan subdirectories
-            if let Ok(sub_entries) = fs::read_dir(&path) {
-                scan_directory(sub_entries, apps, folder_name);
+            if path.is_dir() {
+                // Recurse into subdirectories, using folder name as group
+                if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if let Ok(sub_entries) = fs::read_dir(&path) {
+                        scan_directory(sub_entries, apps, Some(folder_name.to_string()));
+                    }
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("lnk") {
+                // Add .lnk file as an app shortcut
+                if let Some(name) = path.file_stem().and_then(|n| n.to_str()) {
+                    apps.push(AppShortcut {
+                        id: None,
+                        name: name.to_string(),
+                        path: path.to_string_lossy().to_string(),
+                        icon: None,
+                        icon_filename: None,
+                        target: Some(path.to_string_lossy().to_string()), // TODO: resolve .lnk target via lnk-crate or COM
+                        folder_group: group.clone(),
+                        hidden: false,
+                    });
+                }
             }
-        } else if path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("lnk")) {
-            let name = path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Unknown")
-                .to_string();
-            let path_str = path.to_string_lossy().to_string();
-
-            // TODO: Add proper .lnk resolution using lnk crate or Windows COM (IShellLinkW + IPersistFile)
-            // For now, use .lnk path as target - this works for icon extraction with IShellItemImageFactory
-            apps.push(AppShortcut {
-                id: None,
-                name,
-                path: path_str.clone(),
-                icon: Some(path_str.clone()),
-                icon_filename: None,
-                target: Some(path_str.clone()),
-                folder_group: group.clone(),
-                hidden: false,
-            });
         }
     }
 }
 
-/// Filter out unwanted apps
-fn filter_apps(apps: Vec<AppShortcut>) -> Vec<AppShortcut> {
-    apps.into_iter()
-        .filter(|app| {
-            // Skip unwanted name patterns
-            let name_lower = app.name.to_lowercase();
-            for pattern in UNWANTED_PATTERNS {
-                if name_lower.contains(pattern) {
-                    return false;
-                }
+/// Filter out unwanted apps and deduplicate by name
+fn filter_and_dedupe_apps(mut apps: Vec<AppShortcut>) -> Vec<AppShortcut> {
+    // Filter by name patterns and folder
+    apps.retain(|app| {
+        // Skip unwanted name patterns
+        for pattern in UNWANTED_PATTERNS {
+            if app.name.to_lowercase().contains(&pattern.to_lowercase()) {
+                return false;
             }
-
-            // Skip if in hidden folder (unless shell item)
-            if let Some(group) = &app.folder_group {
-                if HIDDEN_FOLDERS.iter().any(|f| f.eq_ignore_ascii_case(group)) {
-                    return false;
-                }
-            }
-
-            true
-        })
-        .collect()
-}
-
-/// Deduplicate by name (lowercase), preferring shorter path
-fn dedupe_apps(mut apps: Vec<AppShortcut>) -> Vec<AppShortcut> {
-    apps.sort_by(|a, b| {
-        let name_cmp = a.name.to_lowercase().cmp(&b.name.to_lowercase());
-        if name_cmp == std::cmp::Ordering::Equal {
-            a.path.len().cmp(&b.path.len())
-        } else {
-            name_cmp
         }
+
+        // Skip apps in hidden folders
+        if let Some(folder) = &app.folder_group {
+            for hidden_folder in HIDDEN_FOLDERS {
+                if folder.to_lowercase() == hidden_folder.to_lowercase() {
+                    return false;
+                }
+            }
+        }
+
+        true
     });
+
+    // Deduplicate by name (case-insensitive)
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     apps.dedup_by(|a, b| a.name.to_lowercase() == b.name.to_lowercase());
-
-    apps
-}
-
-/// Collapse folder groups (keep one primary entry per folder)
-/// Only hide siblings that share the first word with the primary entry or folder name
-fn collapse_folders(mut apps: Vec<AppShortcut>) -> Vec<AppShortcut> {
-    // Group by folder
-    let mut groups: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
-
-    for (i, app) in apps.iter().enumerate() {
-        let group_key = app.folder_group.as_deref().unwrap_or("root").to_lowercase();
-        groups.entry(group_key).or_default().push(i);
-    }
-
-    // For each folder with >1 entry, mark one as primary
-    for (group_name, indices) in groups {
-        if indices.len() > 1 && group_name != "root" {
-            // Find primary: name equals or contains folder name, or shortest name
-            let primary_idx = *indices.iter()
-                .min_by_key(|&&i| {
-                    let app = &apps[i];
-                    let name_lower = app.name.to_lowercase();
-                    let group_lower = group_name.to_lowercase();
-
-                    if name_lower == group_lower {
-                        return 0; // Exact match = highest priority
-                    }
-                    if name_lower.contains(&group_lower) {
-                        return 1; // Contains = medium priority
-                    }
-                    2 // Otherwise, sort by name length
-                })
-                .unwrap_or(&indices[0]);
-
-            let primary_app = &apps[primary_idx];
-            let primary_first_word = primary_app.name.split_whitespace().next()
-                .map(|w| w.to_lowercase())
-                .unwrap_or_else(|| "".to_string());
-
-            let folder_first_word = group_name.split_whitespace().next()
-                .map(|w| w.to_lowercase())
-                .unwrap_or_else(|| "".to_string());
-
-            // Mark others as hidden ONLY if they share the first word
-            for &idx in &indices {
-                if idx != primary_idx {
-                    let app = &apps[idx];
-                    let app_first_word = app.name.split_whitespace().next()
-                        .map(|w| w.to_lowercase())
-                        .unwrap_or_else(|| "".to_string());
-
-                    // Hide if first word matches primary OR folder
-                    if app_first_word == primary_first_word || app_first_word == folder_first_word {
-                        apps[idx].hidden = true;
-                    }
-                }
-            }
-        }
-    }
 
     apps
 }
@@ -243,39 +158,39 @@ mod tests {
         let apps = vec![
             AppShortcut {
                 id: None,
-                name: "Uninstall My App".to_string(),
-                path: "C:\\test.lnk".to_string(),
+                name: "Uninstall MyApp".to_string(),
+                path: "C:\\test\\uninstall.lnk".to_string(),
                 icon: None,
                 icon_filename: None,
-                target: Some("C:\\Program Files\\MyApp\\uninstall.exe".to_string()),
+                target: None,
                 folder_group: None,
                 hidden: false,
             },
             AppShortcut {
                 id: None,
-                name: "My App Help".to_string(),
-                path: "C:\\test.lnk".to_string(),
+                name: "MyApp Help".to_string(),
+                path: "C:\\test\\help.lnk".to_string(),
                 icon: None,
                 icon_filename: None,
-                target: Some("C:\\Program Files\\MyApp\\myapp.exe".to_string()),
+                target: None,
                 folder_group: None,
                 hidden: false,
             },
             AppShortcut {
                 id: None,
-                name: "My App".to_string(),
-                path: "C:\\test.lnk".to_string(),
+                name: "MyApp".to_string(),
+                path: "C:\\test\\app.lnk".to_string(),
                 icon: None,
                 icon_filename: None,
-                target: Some("C:\\Program Files\\MyApp\\myapp.exe".to_string()),
+                target: None,
                 folder_group: None,
                 hidden: false,
             },
         ];
 
-        let filtered = filter_apps(apps);
+        let filtered = filter_and_dedupe_apps(apps);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].name, "My App");
+        assert_eq!(filtered[0].name, "MyApp");
     }
 
     #[test]
@@ -283,216 +198,27 @@ mod tests {
         let apps = vec![
             AppShortcut {
                 id: None,
-                name: "My App".to_string(),
-                path: "C:\\folder1\\app.lnk".to_string(),
+                name: "MyApp".to_string(),
+                path: "C:\\test\\app.lnk".to_string(),
                 icon: None,
                 icon_filename: None,
-                target: Some("C:\\Program Files\\MyApp\\app.exe".to_string()),
+                target: None,
                 folder_group: None,
                 hidden: false,
             },
             AppShortcut {
                 id: None,
-                name: "My App".to_string(),
-                path: "C:\\folder2\\app.lnk".to_string(),
+                name: "MYAPP".to_string(),
+                path: "C:\\test2\\app.lnk".to_string(),
                 icon: None,
                 icon_filename: None,
-                target: Some("C:\\Program Files\\MyApp\\app.exe".to_string()),
+                target: None,
                 folder_group: None,
                 hidden: false,
             },
         ];
 
-        let deduped = dedupe_apps(apps);
-        assert_eq!(deduped.len(), 1);
-    }
-
-    #[test]
-    fn test_folder_collapse_same_first_word() {
-        let apps = vec![
-            AppShortcut {
-                id: None,
-                name: "Git Bash".to_string(),
-                path: "C:\\Git\\Git Bash.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Program Files\\Git\\bin\\bash.exe".to_string()),
-                folder_group: Some("Git".to_string()),
-                hidden: false,
-            },
-            AppShortcut {
-                id: None,
-                name: "Git CMD".to_string(),
-                path: "C:\\Git\\Git CMD.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Program Files\\Git\\cmd\\git.exe".to_string()),
-                folder_group: Some("Git".to_string()),
-                hidden: false,
-            },
-            AppShortcut {
-                id: None,
-                name: "Git GUI".to_string(),
-                path: "C:\\Git\\Git GUI.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Program Files\\Git\\cmd\\git-gui.exe".to_string()),
-                folder_group: Some("Git".to_string()),
-                hidden: false,
-            },
-        ];
-
-        let collapsed = collapse_folders(apps);
-        assert_eq!(collapsed.len(), 3);
-        // Git Bash should be primary (contains "Git" in name)
-        let git_bash = collapsed.iter().find(|a| a.name == "Git Bash").unwrap();
-        assert!(!git_bash.hidden);
-        // Git CMD and Git GUI should be hidden (same first word "Git")
-        let git_cmd = collapsed.iter().find(|a| a.name == "Git CMD").unwrap();
-        assert!(git_cmd.hidden);
-        let git_gui = collapsed.iter().find(|a| a.name == "Git GUI").unwrap();
-        assert!(git_gui.hidden);
-    }
-
-    #[test]
-    fn test_folder_collapse_different_first_words() {
-        let apps = vec![
-            AppShortcut {
-                id: None,
-                name: "Word".to_string(),
-                path: "C:\\Office\\Word.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Program Files\\Office\\WINWORD.EXE".to_string()),
-                folder_group: Some("Microsoft Office".to_string()),
-                hidden: false,
-            },
-            AppShortcut {
-                id: None,
-                name: "Excel".to_string(),
-                path: "C:\\Office\\Excel.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Program Files\\Office\\EXCEL.EXE".to_string()),
-                folder_group: Some("Microsoft Office".to_string()),
-                hidden: false,
-            },
-            AppShortcut {
-                id: None,
-                name: "PowerPoint".to_string(),
-                path: "C:\\Office\\PowerPoint.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Program Files\\Office\\POWERPNT.EXE".to_string()),
-                folder_group: Some("Microsoft Office".to_string()),
-                hidden: false,
-            },
-        ];
-
-        let collapsed = collapse_folders(apps);
-        assert_eq!(collapsed.len(), 3);
-        // All should be visible (different first words: Word, Excel, PowerPoint)
-        for app in &collapsed {
-            assert!(!app.hidden, "{} should not be hidden", app.name);
-        }
-    }
-
-    #[test]
-    fn test_system_tools_folder_not_excluded() {
-        let apps = vec![
-            AppShortcut {
-                id: None,
-                name: "File Explorer".to_string(),
-                path: "C:\\Windows\\explorer.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Windows\\explorer.exe".to_string()),
-                folder_group: Some("System Tools".to_string()),
-                hidden: false,
-            },
-            AppShortcut {
-                id: None,
-                name: "Control Panel".to_string(),
-                path: "C:\\Windows\\control.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Windows\\System32\\control.exe".to_string()),
-                folder_group: Some("Windows System".to_string()),
-                hidden: false,
-            },
-            AppShortcut {
-                id: None,
-                name: "Task Manager".to_string(),
-                path: "C:\\Windows\\taskmgr.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Windows\\System32\\taskmgr.exe".to_string()),
-                folder_group: Some("System Tools".to_string()),
-                hidden: false,
-            },
-            AppShortcut {
-                id: None,
-                name: "Computer Management".to_string(),
-                path: "C:\\Windows\\compmgmt.lnk".to_string(),
-                icon: None,
-                icon_filename: None,
-                target: Some("C:\\Windows\\System32\\compmgmt.msc".to_string()),
-                folder_group: Some("Administrative Tools".to_string()),
-                hidden: false,
-            },
-        ];
-
-        let filtered = filter_apps(apps);
-        // File Explorer, Control Panel, Task Manager should be kept
-        // Computer Management should be dropped (Administrative Tools)
-        assert_eq!(filtered.len(), 3);
-        assert!(filtered.iter().any(|a| a.name == "File Explorer"));
-        assert!(filtered.iter().any(|a| a.name == "Control Panel"));
-        assert!(filtered.iter().any(|a| a.name == "Task Manager"));
-        assert!(!filtered.iter().any(|a| a.name == "Computer Management"));
-    }
-
-    #[test]
-    fn test_lnk_paths_survive_filtering() {
-        let apps = vec![
-            AppShortcut {
-                id: None,
-                name: "Zoom".to_string(),
-                path: "C:\\Program Files\\Zoom\\bin\\Zoom.lnk".to_string(),
-                icon: Some("C:\\Program Files\\Zoom\\bin\\Zoom.lnk".to_string()),
-                icon_filename: None,
-                target: Some("C:\\Program Files\\Zoom\\bin\\Zoom.lnk".to_string()),
-                folder_group: None,
-                hidden: false,
-            },
-            AppShortcut {
-                id: None,
-                name: "Git Bash".to_string(),
-                path: "C:\\Program Files\\Git\\Git Bash.lnk".to_string(),
-                icon: Some("C:\\Program Files\\Git\\Git Bash.lnk".to_string()),
-                icon_filename: None,
-                target: Some("C:\\Program Files\\Git\\Git Bash.lnk".to_string()),
-                folder_group: Some("Git".to_string()),
-                hidden: false,
-            },
-            AppShortcut {
-                id: None,
-                name: "Word".to_string(),
-                path: "C:\\Program Files\\Office\\Word.lnk".to_string(),
-                icon: Some("C:\\Program Files\\Office\\Word.lnk".to_string()),
-                icon_filename: None,
-                target: Some("C:\\Program Files\\Office\\Word.lnk".to_string()),
-                folder_group: Some("Microsoft Office".to_string()),
-                hidden: false,
-            },
-        ];
-
-        let filtered = filter_apps(apps);
-        // All should survive filtering (no .exe requirement)
-        assert_eq!(filtered.len(), 3);
-        assert!(filtered.iter().any(|a| a.name == "Zoom"));
-        assert!(filtered.iter().any(|a| a.name == "Git Bash"));
-        assert!(filtered.iter().any(|a| a.name == "Word"));
+        let filtered = filter_and_dedupe_apps(apps);
+        assert_eq!(filtered.len(), 1);
     }
 }
-

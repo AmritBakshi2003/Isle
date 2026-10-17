@@ -48,7 +48,11 @@
     calc: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h3M8 10h3M8 14h3M13 6h3M13 10h3M13 14h3M8 18h8"/>',
     'file-doc': '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M7 14h3M7 17h6M7 20h4"/>',
     'file-zip': '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M10 12h4M10 16h4"/>',
-    'check': '<polyline points="20 6 9 17 4 12"/>',
+    check: '<polyline points="20 6 9 17 4 12"/>',
+    search: '<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>',
+    x: '<path d="M18 6L6 18M6 6l12 12"/>',
+    app: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>',
+    console: '<path d="M20 7h-9l-2-9H5v17h17V7z"/><path d="M8 12h.01M8 16h.01M8 20h.01M12 12h.01M12 16h.01M12 20h.01M16 12h.01M16 16h.01M16 20h.01"/>',
   };
 </script>
 
