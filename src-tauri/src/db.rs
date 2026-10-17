@@ -69,6 +69,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("6", "ALTER TABLE app_shortcuts ADD COLUMN icon_filename TEXT"),
     // v7: Clear icon filenames to force regeneration with new color scheme
     ("7", "UPDATE app_shortcuts SET icon_filename = NULL"),
+    // v8: Clear icon filenames again to force regeneration with native Windows icon extraction
+    ("8", "UPDATE app_shortcuts SET icon_filename = NULL"),
 ];
 
 impl Db {
