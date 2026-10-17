@@ -21,8 +21,6 @@ const HIDDEN_FOLDERS: &[&str] = &[
     "Administrative Tools",
     "Windows Administrative Tools",
     "Accessibility",
-    "System Tools",
-    "Windows System",
 ];
 
 /// Unwanted name patterns
@@ -396,6 +394,61 @@ mod tests {
         for app in &collapsed {
             assert!(!app.hidden, "{} should not be hidden", app.name);
         }
+    }
+
+    #[test]
+    fn test_system_tools_folder_not_excluded() {
+        let apps = vec![
+            AppShortcut {
+                id: None,
+                name: "File Explorer".to_string(),
+                path: "C:\\Windows\\explorer.lnk".to_string(),
+                icon: None,
+                icon_filename: None,
+                target: Some("C:\\Windows\\explorer.exe".to_string()),
+                group: Some("System Tools".to_string()),
+                hidden: false,
+            },
+            AppShortcut {
+                id: None,
+                name: "Control Panel".to_string(),
+                path: "C:\\Windows\\control.lnk".to_string(),
+                icon: None,
+                icon_filename: None,
+                target: Some("C:\\Windows\\System32\\control.exe".to_string()),
+                group: Some("Windows System".to_string()),
+                hidden: false,
+            },
+            AppShortcut {
+                id: None,
+                name: "Task Manager".to_string(),
+                path: "C:\\Windows\\taskmgr.lnk".to_string(),
+                icon: None,
+                icon_filename: None,
+                target: Some("C:\\Windows\\System32\\taskmgr.exe".to_string()),
+                group: Some("System Tools".to_string()),
+                hidden: false,
+            },
+            AppShortcut {
+                id: None,
+                name: "Computer Management".to_string(),
+                path: "C:\\Windows\\compmgmt.lnk".to_string(),
+                icon: None,
+                icon_filename: None,
+                target: Some("C:\\Windows\\System32\\compmgmt.msc".to_string()),
+                group: Some("Administrative Tools".to_string()),
+                hidden: false,
+            },
+        ];
+
+        let filtered = filter_apps(apps);
+        // File Explorer, Control Panel, Task Manager should be kept
+        // Computer Management should be dropped (Administrative Tools)
+        assert_eq!(filtered.len(), 3);
+        assert!(filtered.iter().any(|a| a.name == "File Explorer"));
+        assert!(filtered.iter().any(|a| a.name == "Control Panel"));
+        assert!(filtered.iter().any(|a| a.name == "Task Manager"));
+        assert!(!filtered.iter().any(|a| a.name == "Computer Management"));
     }
 }
 

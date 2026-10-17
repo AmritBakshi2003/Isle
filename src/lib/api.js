@@ -187,6 +187,10 @@ function mock(cmd, a) {
       { id: null, name: 'Google Chrome', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon_filename: null, target: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', group: null, hidden: false },
       { id: null, name: 'Visual Studio Code', path: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon_filename: null, target: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', group: null, hidden: false },
       { id: null, name: 'Spotify', path: 'C:\\Program Files\\Spotify\\Spotify.exe', icon: 'C:\\Program Files\\Spotify\\Spotify.exe', icon_filename: null, target: 'C:\\Program Files\\Spotify\\Spotify.exe', group: null, hidden: false },
+      { id: null, name: 'File Explorer', path: 'C:\\Windows\\explorer.lnk', icon: 'C:\\Windows\\explorer.lnk', icon_filename: null, target: 'C:\\Windows\\explorer.exe', group: 'System Tools', hidden: false },
+      { id: null, name: 'Control Panel', path: 'C:\\Windows\\control.lnk', icon: 'C:\\Windows\\control.lnk', icon_filename: null, target: 'C:\\Windows\\System32\\control.exe', group: 'Windows System', hidden: false },
+      { id: null, name: 'Task Manager', path: 'C:\\Windows\\taskmgr.lnk', icon: 'C:\\Windows\\taskmgr.lnk', icon_filename: null, target: 'C:\\Windows\\System32\\taskmgr.exe', group: 'System Tools', hidden: false },
+      { id: null, name: 'Command Prompt', path: 'C:\\Windows\\cmd.lnk', icon: 'C:\\Windows\\cmd.lnk', icon_filename: null, target: 'C:\\Windows\\System32\\cmd.exe', group: 'Windows System', hidden: false },
     ];
     case 'app_shortcuts_list': return D.appShortcuts || [];
     case 'app_shortcut_add': {

@@ -391,10 +391,9 @@
 {#if showAppPicker}
   <div
     class="modal-overlay"
-    onclick={() => showAppPicker = false}
-    role="button"
-    tabindex="0"
-    aria-label="Close modal"
+    onclick={(e) => { if (e.target === e.currentTarget) showAppPicker = false; }}
+    onkeydown={(e) => { if (e.key === 'Escape') showAppPicker = false; }}
+    role="presentation"
   >
     <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={handleKeydown} role="dialog" aria-label="Add app shortcut" aria-modal="true" tabindex="-1">
       <div class="modal-header">
@@ -669,7 +668,7 @@
   .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.6);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -677,7 +676,7 @@
   }
 
   .modal {
-    background: var(--bg);
+    background: #14161d;
     border: 1px solid var(--row-hi);
     border-radius: 12px;
     width: 90%;
@@ -694,6 +693,7 @@
     justify-content: space-between;
     padding: 16px;
     border-bottom: 1px solid var(--row-hi);
+    background: #14161d;
   }
 
   .modal-header h3 {
