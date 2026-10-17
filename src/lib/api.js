@@ -37,6 +37,16 @@ const at = (h, m = 0, plusDays = 0) => {
   d.setHours(h, m, 0, 0);
   return sec(d);
 };
+const parseDateTime = (dateStr, timeStr) => {
+  if (!dateStr) return null;
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  if (timeStr) {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    date.setHours(hours, minutes, 0, 0);
+  }
+  return sec(date);
+};
 const art = (c1, c2) =>
   'data:image/svg+xml;utf8,' +
   encodeURIComponent(
@@ -79,14 +89,14 @@ const D = {
     log_level: 'error',
   },
   tasks: [
-    { id: 1, title: 'Send the design review notes', done: false, due: null, remind_min: 0, start_time: null, end_time: null },
-    { id: 2, title: 'Renew the domain', done: false, due: null, remind_min: 0, start_time: null, end_time: null },
-    { id: 3, title: 'Book dentist', done: true, due: null, remind_min: 0, start_time: null, end_time: null },
+    { id: 1, title: 'Send the design review notes', done: false, due: null, remind_min: 0, day: null, done_at: null, notified: false },
+    { id: 2, title: 'Renew the domain', done: false, due: null, remind_min: 0, day: null, done_at: null, notified: false },
+    { id: 3, title: 'Book dentist', done: true, due: null, remind_min: 0, day: null, done_at: null, notified: false },
   ],
   events: [
-    { id: 1, title: 'Standup', start: at(10, 0), end: null, remind_min: 10 },
-    { id: 2, title: 'Design review', start: at(15, 30), end: null, remind_min: 10 },
-    { id: 3, title: 'Lunch with Asha', start: at(13, 0, 2), end: null, remind_min: 30 },
+    { id: 1, title: 'Standup', start: at(10, 0), end: null, remind_min: 10, color: null },
+    { id: 2, title: 'Design review', start: at(15, 30), end: null, remind_min: 10, color: null },
+    { id: 3, title: 'Lunch with Asha', start: at(13, 0, 2), end: null, remind_min: 30, color: null },
   ],
   clips: [
     { id: 1, text: 'https://tauri.app/start/', pinned: true, ts: sec() - 4000, file_path: null, file_name: null, file_type: null },
@@ -116,14 +126,45 @@ function mock(cmd, a) {
       emit('media://update', { ...M });
       return;
     case 'task_list': return [...D.tasks].sort((x, y) => x.done - y.done || y.id - x.id);
-    case 'task_add': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: 0, start_time: a.startTime ?? null, end_time: a.endTime ?? null }); return seq;
-    case 'task_add_with_reminder': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: a.remindMin, start_time: a.startTime ?? null, end_time: a.endTime ?? null }); return seq;
+    case 'task_add': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: 0, day: null, done_at: null, notified: false }); return seq;
+    case 'task_add_full': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: a.remindMin ?? 15, day: a.day ?? null, done_at: null, notified: false }); return seq;
+    case 'task_add_with_reminder': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: a.remindMin, day: null, done_at: null, notified: false }); return seq;
     case 'task_cancel_reminder': { const t = D.tasks.find((x) => x.id === a.id); if (t) t.remind_min = 0; return; }
     case 'task_toggle': { const t = D.tasks.find((x) => x.id === a.id); t.done = !t.done; return; }
+    case 'task_update': { const t = D.tasks.find((x) => x.id === a.id); if (t) { t.title = a.title; t.day = a.day; t.due = a.due; t.remind_min = a.remindMin; } return; }
     case 'task_delete': return del('tasks', a.id);
     case 'task_clear_done': D.tasks = D.tasks.filter((t) => !t.done); return;
+    case 'events_for_day': return D.events.filter((e) => e.start >= at(0, 0) && e.start < at(23, 59)).map(e => ({ ...e, in_progress: false }));
+    case 'month_event_days': return ['2025-01-15', '2025-01-20', '2025-01-25'];
+    case 'tasks_visible': {
+      const now = sec();
+      const todayStr = new Date().toISOString().split('T')[0];
+      const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+      return {
+        today: D.tasks.filter(t => !t.done && (t.day === todayStr || !t.day)),
+        tomorrow: D.tasks.filter(t => !t.done && (t.day === tomorrowStr)),
+        next_change_ts: now + 1800
+      };
+    }
+    case 'purge_expired': return;
     case 'event_list': return D.events.filter((e) => e.start >= a.from && e.start < a.to).sort((x, y) => x.start - y.start);
-    case 'event_add': D.events.push({ id: ++seq, title: a.title, start: a.start, end: a.end ?? null, remind_min: a.remindMin }); return seq;
+    case 'event_add': {
+      const start = parseDateTime(a.date, a.start);
+      const end = a.end ? parseDateTime(a.date, a.end) : null;
+      D.events.push({ id: ++seq, title: a.title, start, end, remind_min: a.remindMin, color: a.color ?? null });
+      return seq;
+    }
+    case 'event_update': {
+      const e = D.events.find((x) => x.id === a.id);
+      if (e) {
+        e.title = a.title;
+        e.start = parseDateTime(a.date, a.start);
+        e.end = a.end ? parseDateTime(a.date, a.end) : null;
+        e.remind_min = a.remindMin;
+        e.color = a.color;
+      }
+      return;
+    }
     case 'event_delete': return del('events', a.id);
     case 'clip_list': return D.clips
       .filter((c) => c.text.toLowerCase().includes((a.query || '').toLowerCase()))

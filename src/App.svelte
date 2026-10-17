@@ -305,13 +305,14 @@
   }
 
   function handleTabClick(tabId) {
-    console.log('Tab clicked:', tabId);
+    console.log('Tab clicked:', tabId, 'Current ui.tab:', ui.tab);
     if (tabId === 'settings') {
       openSettings();
       // Switch back to music tab after opening settings
       ui.tab = 'music';
     } else {
       ui.tab = tabId;
+      console.log('Set ui.tab to:', ui.tab);
     }
   }
 

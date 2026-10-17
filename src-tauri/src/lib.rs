@@ -70,6 +70,14 @@ pub fn run() {
             clipboard::start(handle.clone());
             app.manage(progress::start(handle.clone())); // single-channel progress manager
 
+            // Run purge on startup
+            {
+                let db = app.state::<db::Db>();
+                let now = db::now();
+                let tz_offset = chrono::Local::now().offset().local_minus_utc() / 60;
+                let _ = commands::purge_expired(db.clone(), now, tz_offset as i64);
+            }
+
             // Check clipboard module setting
             {
                 let db = app.state::<db::Db>();
@@ -143,6 +151,16 @@ pub fn run() {
                 window.hide().unwrap_or(());
                 api.prevent_close();
             }
+            // Run purge on main window focus (e.g., waking from sleep after midnight)
+            if let tauri::WindowEvent::Focused(_) = event {
+                if window.label() == "main" && window.is_visible().unwrap_or(false) {
+                    if let Some(db) = window.try_state::<crate::db::Db>() {
+                        let now = crate::db::now();
+                        let tz_offset = chrono::Local::now().offset().local_minus_utc() / 60;
+                        let _ = commands::purge_expired(db.clone(), now, tz_offset as i64);
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             island::island_resize,
@@ -155,9 +173,16 @@ pub fn run() {
             commands::task_toggle,
             commands::task_delete,
             commands::task_clear_done,
+            commands::task_add_full,
+            commands::task_update,
+            commands::tasks_visible,
+            commands::purge_expired,
             commands::event_list,
             commands::event_add,
             commands::event_delete,
+            commands::event_update,
+            commands::events_for_day,
+            commands::month_event_days,
             commands::clip_list,
             commands::clip_copy,
             commands::clip_pin,

@@ -33,10 +33,11 @@ CREATE TABLE IF NOT EXISTS clips(
   file_path TEXT, file_name TEXT, file_type TEXT);
 CREATE TABLE IF NOT EXISTS tasks(
   id INTEGER PRIMARY KEY, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0,
-  due INTEGER, created INTEGER NOT NULL, toast_id TEXT, remind_min INTEGER DEFAULT 0);
+  due INTEGER, created INTEGER NOT NULL, toast_id TEXT, remind_min INTEGER DEFAULT 0,
+  day TEXT, done_at INTEGER, notified INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY, title TEXT NOT NULL, starts INTEGER NOT NULL, ends INTEGER,
-  remind_min INTEGER NOT NULL DEFAULT 10, notified INTEGER NOT NULL DEFAULT 0);
+  remind_min INTEGER NOT NULL DEFAULT 10, notified INTEGER NOT NULL DEFAULT 0, color TEXT);
 CREATE INDEX IF NOT EXISTS events_starts ON events(starts);
 CREATE TABLE IF NOT EXISTS modes(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, icon TEXT NOT NULL, actions TEXT NOT NULL);
@@ -79,6 +80,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("10", "ALTER TABLE app_shortcuts ADD COLUMN target TEXT"),
     ("10", "ALTER TABLE app_shortcuts ADD COLUMN folder_group TEXT"),
     ("10", "ALTER TABLE app_shortcuts ADD COLUMN hidden INTEGER DEFAULT 0"),
+    // v11: Add day and done_at columns to tasks, and color column to events for unified TaskCalendar
+    // Backfill day from due or created, and done_at from created for done tasks
+    ("11", "ALTER TABLE tasks ADD COLUMN day TEXT"),
+    ("11", "ALTER TABLE tasks ADD COLUMN done_at INTEGER"),
+    ("11", "ALTER TABLE tasks ADD COLUMN notified INTEGER DEFAULT 0"),
+    ("11", "UPDATE tasks SET day = CASE WHEN due IS NOT NULL THEN date(due, 'unixepoch', 'localtime') ELSE date(created, 'unixepoch', 'localtime') END WHERE day IS NULL"),
+    ("11", "UPDATE tasks SET done_at = created WHERE done = 1 AND done_at IS NULL"),
+    ("11", "ALTER TABLE events ADD COLUMN color TEXT"),
 ];
 
 impl Db {
