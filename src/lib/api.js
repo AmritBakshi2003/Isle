@@ -191,11 +191,14 @@ function mock(cmd, a) {
       { id: null, name: 'Control Panel', path: 'C:\\Windows\\control.lnk', icon: 'C:\\Windows\\control.lnk', icon_filename: null, target: 'C:\\Windows\\System32\\control.exe', group: 'Windows System', hidden: false },
       { id: null, name: 'Task Manager', path: 'C:\\Windows\\taskmgr.lnk', icon: 'C:\\Windows\\taskmgr.lnk', icon_filename: null, target: 'C:\\Windows\\System32\\taskmgr.exe', group: 'System Tools', hidden: false },
       { id: null, name: 'Command Prompt', path: 'C:\\Windows\\cmd.lnk', icon: 'C:\\Windows\\cmd.lnk', icon_filename: null, target: 'C:\\Windows\\System32\\cmd.exe', group: 'Windows System', hidden: false },
+      { id: null, name: 'Zoom', path: 'C:\\Program Files\\Zoom\\bin\\Zoom.lnk', icon: 'C:\\Program Files\\Zoom\\bin\\Zoom.lnk', icon_filename: null, target: 'C:\\Program Files\\Zoom\\bin\\Zoom.lnk', group: null, hidden: false },
+      { id: null, name: 'Git Bash', path: 'C:\\Program Files\\Git\\Git Bash.lnk', icon: 'C:\\Program Files\\Git\\Git Bash.lnk', icon_filename: null, target: 'C:\\Program Files\\Git\\Git Bash.lnk', group: 'Git', hidden: false },
+      { id: null, name: 'Word', path: 'C:\\Program Files\\Office\\Word.lnk', icon: 'C:\\Program Files\\Office\\Word.lnk', icon_filename: null, target: 'C:\\Program Files\\Office\\Word.lnk', group: 'Microsoft Office', hidden: false },
     ];
     case 'app_shortcuts_list': return D.appShortcuts || [];
     case 'app_shortcut_add': {
       if (!D.appShortcuts) D.appShortcuts = [];
-      D.appShortcuts.push({ id: ++seq, name: a.name, path: a.path, icon: a.icon, icon_filename: null, target: a.target, group: a.group, hidden: a.hidden });
+      D.appShortcuts.push({ id: ++seq, name: a.name, path: a.path, icon: a.icon, icon_filename: null, target: a.target, group: a.folder_group, hidden: a.hidden });
       return seq;
     }
     case 'app_shortcut_remove': {

@@ -12,7 +12,8 @@ pub struct AppShortcut {
     pub icon: Option<String>,
     pub icon_filename: Option<String>,
     pub target: Option<String>,
-    pub group: Option<String>,
+    #[serde(rename = "group")]
+    pub folder_group: Option<String>,
     pub hidden: bool,
 }
 
@@ -68,7 +69,7 @@ pub fn enumerate_apps() -> Result<Vec<AppShortcut>, String> {
         icon: Some("shell:::{645FF040-5081-101B-9F08-00AA002F954E}".to_string()),
         icon_filename: None,
         target: None,
-        group: None,
+        folder_group: None,
         hidden: false,
     });
 
@@ -79,7 +80,7 @@ pub fn enumerate_apps() -> Result<Vec<AppShortcut>, String> {
         icon: Some("shell:::{21EC2020-3AEA-1069-A2DD-08002B30309D}".to_string()),
         icon_filename: None,
         target: None,
-        group: None,
+        folder_group: None,
         hidden: false,
     });
 
@@ -127,7 +128,7 @@ fn scan_directory(entries: fs::ReadDir, apps: &mut Vec<AppShortcut>, group: Opti
                 icon: Some(path_str.clone()),
                 icon_filename: None,
                 target: Some(path_str.clone()),
-                group: group.clone(),
+                folder_group: group.clone(),
                 hidden: false,
             });
         }
@@ -147,7 +148,7 @@ fn filter_apps(apps: Vec<AppShortcut>) -> Vec<AppShortcut> {
             }
 
             // Skip if in hidden folder (unless shell item)
-            if let Some(group) = &app.group {
+            if let Some(group) = &app.folder_group {
                 if HIDDEN_FOLDERS.iter().any(|f| f.eq_ignore_ascii_case(group)) {
                     return false;
                 }
@@ -180,7 +181,7 @@ fn collapse_folders(mut apps: Vec<AppShortcut>) -> Vec<AppShortcut> {
     let mut groups: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
 
     for (i, app) in apps.iter().enumerate() {
-        let group_key = app.group.as_deref().unwrap_or("root").to_lowercase();
+        let group_key = app.folder_group.as_deref().unwrap_or("root").to_lowercase();
         groups.entry(group_key).or_default().push(i);
     }
 
@@ -247,7 +248,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\MyApp\\uninstall.exe".to_string()),
-                group: None,
+                folder_group: None,
                 hidden: false,
             },
             AppShortcut {
@@ -257,7 +258,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\MyApp\\myapp.exe".to_string()),
-                group: None,
+                folder_group: None,
                 hidden: false,
             },
             AppShortcut {
@@ -267,7 +268,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\MyApp\\myapp.exe".to_string()),
-                group: None,
+                folder_group: None,
                 hidden: false,
             },
         ];
@@ -287,7 +288,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\MyApp\\app.exe".to_string()),
-                group: None,
+                folder_group: None,
                 hidden: false,
             },
             AppShortcut {
@@ -297,7 +298,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\MyApp\\app.exe".to_string()),
-                group: None,
+                folder_group: None,
                 hidden: false,
             },
         ];
@@ -316,7 +317,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\Git\\bin\\bash.exe".to_string()),
-                group: Some("Git".to_string()),
+                folder_group: Some("Git".to_string()),
                 hidden: false,
             },
             AppShortcut {
@@ -326,7 +327,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\Git\\cmd\\git.exe".to_string()),
-                group: Some("Git".to_string()),
+                folder_group: Some("Git".to_string()),
                 hidden: false,
             },
             AppShortcut {
@@ -336,7 +337,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\Git\\cmd\\git-gui.exe".to_string()),
-                group: Some("Git".to_string()),
+                folder_group: Some("Git".to_string()),
                 hidden: false,
             },
         ];
@@ -363,7 +364,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\Office\\WINWORD.EXE".to_string()),
-                group: Some("Microsoft Office".to_string()),
+                folder_group: Some("Microsoft Office".to_string()),
                 hidden: false,
             },
             AppShortcut {
@@ -373,7 +374,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\Office\\EXCEL.EXE".to_string()),
-                group: Some("Microsoft Office".to_string()),
+                folder_group: Some("Microsoft Office".to_string()),
                 hidden: false,
             },
             AppShortcut {
@@ -383,7 +384,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Program Files\\Office\\POWERPNT.EXE".to_string()),
-                group: Some("Microsoft Office".to_string()),
+                folder_group: Some("Microsoft Office".to_string()),
                 hidden: false,
             },
         ];
@@ -406,7 +407,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Windows\\explorer.exe".to_string()),
-                group: Some("System Tools".to_string()),
+                folder_group: Some("System Tools".to_string()),
                 hidden: false,
             },
             AppShortcut {
@@ -416,7 +417,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Windows\\System32\\control.exe".to_string()),
-                group: Some("Windows System".to_string()),
+                folder_group: Some("Windows System".to_string()),
                 hidden: false,
             },
             AppShortcut {
@@ -426,7 +427,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Windows\\System32\\taskmgr.exe".to_string()),
-                group: Some("System Tools".to_string()),
+                folder_group: Some("System Tools".to_string()),
                 hidden: false,
             },
             AppShortcut {
@@ -436,7 +437,7 @@ mod tests {
                 icon: None,
                 icon_filename: None,
                 target: Some("C:\\Windows\\System32\\compmgmt.msc".to_string()),
-                group: Some("Administrative Tools".to_string()),
+                folder_group: Some("Administrative Tools".to_string()),
                 hidden: false,
             },
         ];
@@ -449,6 +450,49 @@ mod tests {
         assert!(filtered.iter().any(|a| a.name == "Control Panel"));
         assert!(filtered.iter().any(|a| a.name == "Task Manager"));
         assert!(!filtered.iter().any(|a| a.name == "Computer Management"));
+    }
+
+    #[test]
+    fn test_lnk_paths_survive_filtering() {
+        let apps = vec![
+            AppShortcut {
+                id: None,
+                name: "Zoom".to_string(),
+                path: "C:\\Program Files\\Zoom\\bin\\Zoom.lnk".to_string(),
+                icon: Some("C:\\Program Files\\Zoom\\bin\\Zoom.lnk".to_string()),
+                icon_filename: None,
+                target: Some("C:\\Program Files\\Zoom\\bin\\Zoom.lnk".to_string()),
+                folder_group: None,
+                hidden: false,
+            },
+            AppShortcut {
+                id: None,
+                name: "Git Bash".to_string(),
+                path: "C:\\Program Files\\Git\\Git Bash.lnk".to_string(),
+                icon: Some("C:\\Program Files\\Git\\Git Bash.lnk".to_string()),
+                icon_filename: None,
+                target: Some("C:\\Program Files\\Git\\Git Bash.lnk".to_string()),
+                folder_group: Some("Git".to_string()),
+                hidden: false,
+            },
+            AppShortcut {
+                id: None,
+                name: "Word".to_string(),
+                path: "C:\\Program Files\\Office\\Word.lnk".to_string(),
+                icon: Some("C:\\Program Files\\Office\\Word.lnk".to_string()),
+                icon_filename: None,
+                target: Some("C:\\Program Files\\Office\\Word.lnk".to_string()),
+                folder_group: Some("Microsoft Office".to_string()),
+                hidden: false,
+            },
+        ];
+
+        let filtered = filter_apps(apps);
+        // All should survive filtering (no .exe requirement)
+        assert_eq!(filtered.len(), 3);
+        assert!(filtered.iter().any(|a| a.name == "Zoom"));
+        assert!(filtered.iter().any(|a| a.name == "Git Bash"));
+        assert!(filtered.iter().any(|a| a.name == "Word"));
     }
 }
 

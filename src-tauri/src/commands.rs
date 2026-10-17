@@ -604,7 +604,7 @@ pub fn enumerate_apps() -> Result<Vec<apps::AppShortcut>, String> {
 #[tauri::command]
 pub fn app_shortcuts_list(db: State<Db>) -> Result<Vec<apps::AppShortcut>, String> {
     db.with(|c| {
-        let mut s = c.prepare("SELECT id,name,path,icon,icon_filename,target,group,hidden FROM app_shortcuts ORDER BY name")?;
+        let mut s = c.prepare("SELECT id,name,path,icon,icon_filename,target,folder_group,hidden FROM app_shortcuts ORDER BY name")?;
         let rows = s.query_map([], |r| {
             Ok(apps::AppShortcut {
                 id: Some(r.get(0)?),
@@ -613,7 +613,7 @@ pub fn app_shortcuts_list(db: State<Db>) -> Result<Vec<apps::AppShortcut>, Strin
                 icon: r.get(3)?,
                 icon_filename: r.get(4)?,
                 target: r.get(5)?,
-                group: r.get(6)?,
+                folder_group: r.get(6)?,
                 hidden: r.get(7)?,
             })
         })?;
@@ -623,7 +623,7 @@ pub fn app_shortcuts_list(db: State<Db>) -> Result<Vec<apps::AppShortcut>, Strin
 
 /// Add an app shortcut
 #[tauri::command]
-pub fn app_shortcut_add(app: AppHandle, db: State<Db>, name: String, path: String, icon: Option<String>, target: Option<String>, group: Option<String>, hidden: Option<bool>) -> Result<i64, String> {
+pub fn app_shortcut_add(app: AppHandle, db: State<Db>, name: String, path: String, icon: Option<String>, target: Option<String>, folder_group: Option<String>, hidden: Option<bool>) -> Result<i64, String> {
     // Extract icon from the resolved target executable (not the .lnk)
     let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
     let icon_target = icon.as_ref().unwrap_or(&path);
@@ -637,8 +637,8 @@ pub fn app_shortcut_add(app: AppHandle, db: State<Db>, name: String, path: Strin
 
     db.with(|c| {
         c.execute(
-            "INSERT INTO app_shortcuts(name,path,icon,icon_filename,target,group,hidden) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-            params![name, path, icon, icon_filename, target, group, hidden.unwrap_or(false)],
+            "INSERT INTO app_shortcuts(name,path,icon,icon_filename,target,folder_group,hidden) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![name, path, icon, icon_filename, target, folder_group, hidden.unwrap_or(false)],
         )?;
         Ok(c.last_insert_rowid())
     })

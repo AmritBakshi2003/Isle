@@ -40,6 +40,7 @@
     } catch (e) {
       console.error('Failed to enumerate apps:', e);
       toast('Failed to load apps');
+      availableApps = [];
     }
   }
 
@@ -50,7 +51,7 @@
         path: app.path,
         icon: app.icon,
         target: app.target,
-        group: app.group,
+        folder_group: app.group || app.folder_group,
         hidden: app.hidden
       });
       toast(`Added ${app.name}`);
@@ -251,12 +252,12 @@
   // Search scoring: name only, hidden entries searchable only when query is typed
   let filteredApps = $derived(() => {
     const query = searchQuery.toLowerCase().trim();
-    
+
     if (!query) {
-      // Empty query: show only non-hidden entries
-      return availableApps.filter(app => !app.hidden);
+      // Empty query: show only non-hidden entries (treat missing hidden as false)
+      return availableApps.filter(app => app.hidden !== true);
     }
-    
+
     // Non-empty query: search ALL entries including hidden ones, sort by score
     return availableApps
       .map(app => ({ app, score: calculateSearchScore(app.name, query) }))
@@ -444,8 +445,8 @@
               </div>
               <div class="app-info">
                 <div class="app-name" use:innerHTML={getHighlightedName(app.name, searchQuery)}></div>
-                {#if app.group}
-                  <div class="app-group">{app.group}</div>
+                {#if app.group || app.folder_group}
+                  <div class="app-group">{app.group || app.folder_group}</div>
                 {/if}
               </div>
               <div class="app-action">
