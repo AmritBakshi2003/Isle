@@ -14,6 +14,7 @@ use crate::{
     apps,
     clipboard,
     db::{e2s, now, Db},
+    icon,
     island,
     logger,
     progress::ProgressHandle,
@@ -22,7 +23,7 @@ use crate::{
 use rusqlite::params;
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
@@ -602,13 +603,14 @@ pub fn enumerate_apps() -> Result<Vec<apps::AppShortcut>, String> {
 #[tauri::command]
 pub fn app_shortcuts_list(db: State<Db>) -> Result<Vec<apps::AppShortcut>, String> {
     db.with(|c| {
-        let mut s = c.prepare("SELECT id,name,path FROM app_shortcuts ORDER BY name")?;
+        let mut s = c.prepare("SELECT id,name,path,icon_filename FROM app_shortcuts ORDER BY name")?;
         let rows = s.query_map([], |r| {
             Ok(apps::AppShortcut {
                 id: Some(r.get(0)?),
                 name: r.get(1)?,
                 path: r.get(2)?,
                 icon: None,
+                icon_filename: r.get(3)?,
             })
         })?;
         rows.collect()
@@ -617,17 +619,38 @@ pub fn app_shortcuts_list(db: State<Db>) -> Result<Vec<apps::AppShortcut>, Strin
 
 /// Add an app shortcut
 #[tauri::command]
-pub fn app_shortcut_add(db: State<Db>, name: String, path: String) -> Result<i64, String> {
+pub fn app_shortcut_add(app: AppHandle, db: State<Db>, name: String, path: String) -> Result<i64, String> {
+    // Extract icon from the executable
+    let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
+    let icon_filename = icon::extract_icon_from_path(&path, &app_data_dir).ok();
+
     db.with(|c| {
-        c.execute("INSERT INTO app_shortcuts(name,path) VALUES(?1,?2)", params![name, path])?;
+        c.execute(
+            "INSERT INTO app_shortcuts(name,path,icon_filename) VALUES(?1,?2,?3)",
+            params![name, path, icon_filename],
+        )?;
         Ok(c.last_insert_rowid())
     })
 }
 
 /// Remove an app shortcut
 #[tauri::command]
-pub fn app_shortcut_remove(db: State<Db>, id: i64) -> Result<(), String> {
-    db.with(|c| c.execute("DELETE FROM app_shortcuts WHERE id=?1", [id]).map(|_| ()))
+pub fn app_shortcut_remove(app: AppHandle, db: State<Db>, id: i64) -> Result<(), String> {
+    // Get icon filename before deleting
+    let icon_filename: Option<String> = db.with(|c| {
+        c.query_row("SELECT icon_filename FROM app_shortcuts WHERE id=?1", [id], |r| r.get(0))
+    }).ok();
+
+    // Delete from database
+    db.with(|c| c.execute("DELETE FROM app_shortcuts WHERE id=?1", [id]).map(|_| ()))?;
+
+    // Delete icon file if it exists
+    if let Some(filename) = icon_filename {
+        let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
+        let _ = icon::delete_icon(&filename, &app_data_dir);
+    }
+
+    Ok(())
 }
 
 /// Launch an app shortcut
@@ -644,4 +667,30 @@ pub async fn app_shortcut_launch(path: String) -> Result<(), String> {
         Command::new(&path).spawn().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Get icon file URL for a shortcut
+#[tauri::command]
+pub fn app_shortcut_icon(app: AppHandle, icon_filename: String) -> Result<String, String> {
+    if icon_filename.is_empty() {
+        return Ok(String::new());
+    }
+    let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
+    let icon_path = app_data_dir.join("icons").join(&icon_filename);
+    let icon_path_str = icon_path.to_string_lossy().to_string();
+    Ok(format!("file://{}", icon_path_str.replace('\\', "/")))
+}
+
+/// Clear all cached icons (for testing/regeneration)
+#[tauri::command]
+pub fn clear_all_icons(app: AppHandle) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
+    icon::clear_all_icons(&app_data_dir)
+}
+
+/// Regenerate icon for a specific shortcut
+#[tauri::command]
+pub fn regenerate_shortcut_icon(app: AppHandle, _id: i64, icon_filename: String) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
+    icon::regenerate_icon(&icon_filename, &app_data_dir)
 }

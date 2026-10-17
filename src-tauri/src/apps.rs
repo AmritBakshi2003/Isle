@@ -10,6 +10,7 @@ pub struct AppShortcut {
     pub name: String,
     pub path: String,
     pub icon: Option<String>,
+    pub icon_filename: Option<String>,
 }
 
 /// Scan Windows Start Menu for installed applications
@@ -58,6 +59,7 @@ fn scan_directory(entries: fs::ReadDir, apps: &mut Vec<AppShortcut>) {
                 name,
                 path: path_str,
                 icon: None,
+                icon_filename: None,
             });
         }
     }

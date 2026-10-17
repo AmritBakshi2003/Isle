@@ -184,14 +184,14 @@ function mock(cmd, a) {
     case 'battery_get': return { charging: false, level: 0.72 };
     case 'open_native': console.info('[mock] open_native:', a.app); return;
     case 'enumerate_apps': return [
-      { id: null, name: 'Google Chrome', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon: null },
-      { id: null, name: 'Visual Studio Code', path: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon: null },
-      { id: null, name: 'Spotify', path: 'C:\\Program Files\\Spotify\\Spotify.exe', icon: null },
+      { id: null, name: 'Google Chrome', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon: null, icon_filename: null },
+      { id: null, name: 'Visual Studio Code', path: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon: null, icon_filename: null },
+      { id: null, name: 'Spotify', path: 'C:\\Program Files\\Spotify\\Spotify.exe', icon: null, icon_filename: null },
     ];
     case 'app_shortcuts_list': return D.appShortcuts || [];
     case 'app_shortcut_add': {
       if (!D.appShortcuts) D.appShortcuts = [];
-      D.appShortcuts.push({ id: ++seq, name: a.name, path: a.path, icon: null });
+      D.appShortcuts.push({ id: ++seq, name: a.name, path: a.path, icon: null, icon_filename: null });
       return seq;
     }
     case 'app_shortcut_remove': {
@@ -199,6 +199,9 @@ function mock(cmd, a) {
       return;
     }
     case 'app_shortcut_launch': console.info('[mock] app_shortcut_launch:', a.path); return;
+    case 'app_shortcut_icon': return '';
+    case 'clear_all_icons': console.info('[mock] clear_all_icons'); return;
+    case 'regenerate_shortcut_icon': console.info('[mock] regenerate_shortcut_icon'); return;
     default: throw `mock: unknown command ${cmd}`;
   }
 }

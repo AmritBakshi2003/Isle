@@ -46,6 +46,8 @@
     workspace: '<rect x="2" y="3" width="20" height="18" rx="2"/><path d="M4 7h6M4 11h2M4 15h4"/><circle cx="16" cy="8" r="2"/><path d="M16 12v2"/>',
     close: '<path d="M18 6L6 18M6 6l12 12"/>',
     calc: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h3M8 10h3M8 14h3M13 6h3M13 10h3M13 14h3M8 18h8"/>',
+    'file-doc': '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M7 14h3M7 17h6M7 20h4"/>',
+    'file-zip': '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M10 12h4M10 16h4"/>',
   };
 </script>
 

@@ -36,6 +36,8 @@
       await call('app_shortcut_add', { name: app.name, path: app.path });
       toast(`Added ${app.name}`);
       await loadShortcuts();
+      // Force reload icon URLs after adding new shortcut
+      await loadIconUrls();
       showAppPicker = false;
     } catch (e) {
       console.error('Failed to add shortcut:', e);
@@ -46,6 +48,10 @@
   async function removeShortcut(shortcut) {
     try {
       await call('app_shortcut_remove', { id: shortcut.id });
+      // Clear icon URL from state
+      if (iconUrls[shortcut.id]) {
+        delete iconUrls[shortcut.id];
+      }
       toast('Shortcut removed');
       await loadShortcuts();
     } catch (e) {
@@ -60,6 +66,69 @@
     } catch (e) {
       console.error('Failed to launch app:', e);
       toast('Failed to launch app');
+    }
+  }
+
+  // Preload icon URLs for shortcuts
+  let iconUrls = $state({});
+
+  async function loadIconUrls() {
+    const newUrls = {};
+    for (const shortcut of shortcuts) {
+      if (shortcut.icon_filename) {
+        try {
+          const url = await call('app_shortcut_icon', { iconFilename: shortcut.icon_filename });
+          if (url) {
+            newUrls[shortcut.id] = url;
+          }
+        } catch (e) {
+          console.error('Failed to load icon:', e);
+        }
+      }
+    }
+    iconUrls = newUrls;
+  }
+
+  $effect(() => {
+    loadIconUrls();
+  });
+
+  // Get appropriate icon for an app based on name
+  function getAppIconName(shortcut) {
+    const name = shortcut.name.toLowerCase();
+    if (name.includes('chrome') || name.includes('edge')) return 'file-video'; // Using blue-ish icon
+    if (name.includes('firefox')) return 'file-video'; // Orange icon
+    if (name.includes('excel') || name.includes('spreadsheet')) return 'file-xls'; // Excel-like
+    if (name.includes('word') || name.includes('document')) return 'file-doc'; // Word-like
+    if (name.includes('powerpoint') || name.includes('presentation')) return 'file-pdf'; // Presentation-like
+    if (name.includes('outlook') || name.includes('mail')) return 'file'; // Mail-like
+    if (name.includes('visual studio') || name.includes('vscode') || name.includes('code')) return 'file-code'; // Code-like
+    if (name.includes('spotify')) return 'music'; // Music
+    if (name.includes('discord')) return 'system'; // Discord-like
+    if (name.includes('slack')) return 'file'; // Slack-like
+    if (name.includes('steam')) return 'system'; // Steam-like
+    if (name.includes('photoshop') || name.includes('adobe')) return 'file-image'; // Image-like
+    if (name.includes('recycle') || name.includes('trash')) return 'trash'; // Trash
+    if (name.includes('control') || name.includes('settings')) return 'settings'; // Settings
+    if (name.includes('calculator')) return 'calc'; // Calculator
+    if (name.includes('notepad') || name.includes('text')) return 'file-doc'; // Text
+    if (name.includes('7-zip') || name.includes('zip') || name.includes('archive')) return 'file-zip'; // Archive
+    return 'system'; // Default
+  }
+
+  // Regenerate all icons
+  async function regenerateIcons() {
+    try {
+      await call('clear_all_icons');
+      // Clear icon URLs to force regeneration
+      iconUrls = {};
+      // Reload shortcuts will trigger icon extraction for each one
+      await loadShortcuts();
+      await loadIconUrls();
+      toast('Icons regenerated');
+    } catch (e) {
+      console.error('Failed to regenerate icons:', e);
+      toast('Failed to regenerate icons');
     }
   }
 
@@ -113,7 +182,7 @@
         <span>Calculator</span>
       </button>
       <button class="tool-card" onclick={openNotepad}>
-        <Icon name="file" size={24} />
+        <Icon name="file-doc" size={24} />
         <span>Notepad</span>
       </button>
       <button class="tool-card" onclick={openSettings}>
@@ -126,9 +195,14 @@
   <div class="section">
     <div class="section-header">
       <h3>My Apps</h3>
-      <button class="add-btn" onclick={openAppPicker} aria-label="Add app shortcut">
-        <Icon name="plus" size={16} />
-      </button>
+      <div class="header-actions">
+        <button class="icon-btn" onclick={regenerateIcons} aria-label="Regenerate icons" title="Regenerate icons">
+          <Icon name="system" size={14} />
+        </button>
+        <button class="add-btn" onclick={openAppPicker} aria-label="Add app shortcut">
+          <Icon name="plus" size={16} />
+        </button>
+      </div>
     </div>
     {#if shortcuts.length === 0}
       <div class="empty-state">
@@ -144,6 +218,17 @@
             role="button"
             tabindex="0"
           >
+            {#if iconUrls[shortcut.id]}
+              <img
+                src={iconUrls[shortcut.id]}
+                alt={shortcut.name}
+                class="shortcut-icon"
+                onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }}
+              />
+            {/if}
+            <div class="shortcut-placeholder" style:display={iconUrls[shortcut.id] ? 'none' : 'flex'}>
+              <Icon name={getAppIconName(shortcut)} size={24} />
+            </div>
             <div class="shortcut-name">{shortcut.name}</div>
             <div
               class="remove-btn"
@@ -263,6 +348,30 @@
     margin: 0;
   }
 
+  .header-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .icon-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: var(--row-hi);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--dim);
+    transition: background 0.2s;
+  }
+
+  .icon-btn:hover {
+    background: var(--row-hi);
+    color: var(--ink);
+  }
+
   .add-btn {
     width: 28px;
     height: 28px;
@@ -317,6 +426,24 @@
   .shortcut-card:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
+  }
+
+  .shortcut-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    object-fit: contain;
+  }
+
+  .shortcut-placeholder {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--row-hi);
+    border-radius: 8px;
+    color: var(--dim);
   }
 
   .shortcut-name {

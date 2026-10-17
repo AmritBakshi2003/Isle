@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS routines(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, trig TEXT NOT NULL, actions TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS app_shortcuts(
-  id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE);
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, icon_filename TEXT);
 ";
 
 /// Migration steps to evolve the schema without breaking existing databases.
@@ -65,6 +65,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("4", "ALTER TABLE tasks ADD COLUMN end_time INTEGER"),
     // v5: Add app_shortcuts table for custom app shortcuts
     ("5", "CREATE TABLE IF NOT EXISTS app_shortcuts(id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE)"),
+    // v6: Add icon_filename column to app_shortcuts
+    ("6", "ALTER TABLE app_shortcuts ADD COLUMN icon_filename TEXT"),
+    // v7: Clear icon filenames to force regeneration with new color scheme
+    ("7", "UPDATE app_shortcuts SET icon_filename = NULL"),
 ];
 
 impl Db {

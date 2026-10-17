@@ -17,6 +17,7 @@ mod apps;
 mod clipboard;
 mod commands;
 mod db;
+mod icon;
 mod island;
 mod logger;
 mod media;
@@ -201,6 +202,9 @@ pub fn run() {
             commands::app_shortcut_add,
             commands::app_shortcut_remove,
             commands::app_shortcut_launch,
+            commands::app_shortcut_icon,
+            commands::clear_all_icons,
+            commands::regenerate_shortcut_icon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Isle");
