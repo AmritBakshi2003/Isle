@@ -32,6 +32,23 @@ pub fn enumerate_apps() -> Result<Vec<AppShortcut>, String> {
         scan_directory(entries, &mut apps);
     }
 
+    // Add built-in shell items
+    apps.push(AppShortcut {
+        id: None,
+        name: "Recycle Bin".to_string(),
+        path: "shell:::{645FF040-5081-101B-9F08-00AA002F954E}".to_string(),
+        icon: Some("shell:::{645FF040-5081-101B-9F08-00AA002F954E}".to_string()),
+        icon_filename: None,
+    });
+
+    apps.push(AppShortcut {
+        id: None,
+        name: "Control Panel".to_string(),
+        path: "shell:::{21EC2020-3AEA-1069-A2DD-08002B30309D}".to_string(),
+        icon: Some("shell:::{21EC2020-3AEA-1069-A2DD-08002B30309D}".to_string()),
+        icon_filename: None,
+    });
+
     // Deduplicate by path
     apps.sort_by(|a, b| a.name.cmp(&b.name));
     apps.dedup_by(|a, b| a.path == b.path);
@@ -49,7 +66,7 @@ fn scan_directory(entries: fs::ReadDir, apps: &mut Vec<AppShortcut>) {
             }
         } else if path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("lnk")) {
             // Use the .lnk file path directly
-            // Windows SHGetFileInfoW can extract icons from .lnk files natively
+            // Windows IShellItemImageFactory can extract icons from .lnk files natively
             let name = path.file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("Unknown")

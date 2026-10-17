@@ -58,6 +58,12 @@ pub fn run() {
             let db = db::Db::open(&dir.join("isle.db"))?;
             app.manage(db);
 
+            // Re-extract icons with old cache versions (non-fatal)
+            {
+                let db = app.state::<db::Db>();
+                let _ = commands::reextract_old_icons(app.handle().clone(), db);
+            }
+
             // 2-4. Background services
             app.manage(scheduler::start(handle.clone()));
             media::start(handle.clone());
@@ -205,6 +211,7 @@ pub fn run() {
             commands::app_shortcut_icon,
             commands::clear_all_icons,
             commands::regenerate_shortcut_icon,
+            commands::reextract_old_icons,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Isle");

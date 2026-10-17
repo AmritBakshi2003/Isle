@@ -20,6 +20,7 @@ use crate::{
     progress::ProgressHandle,
     scheduler::Scheduler,
 };
+use base64::Engine;
 use rusqlite::params;
 use serde::Serialize;
 use serde_json::Value;
@@ -623,7 +624,13 @@ pub fn app_shortcut_add(app: AppHandle, db: State<Db>, name: String, path: Strin
     // Extract icon from the resolved target executable (not the .lnk)
     let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
     let icon_target = icon.as_ref().unwrap_or(&path);
-    let icon_filename = icon::extract_icon_from_path(icon_target, &app_data_dir).ok();
+    let icon_filename = match icon::extract_icon_from_path(icon_target, &app_data_dir) {
+        Ok(filename) => Some(filename),
+        Err(e) => {
+            eprintln!("Failed to extract icon for {}: {}", icon_target, e);
+            None
+        }
+    };
 
     db.with(|c| {
         c.execute(
@@ -658,14 +665,24 @@ pub fn app_shortcut_remove(app: AppHandle, db: State<Db>, id: i64) -> Result<(),
 #[tauri::command]
 pub async fn app_shortcut_launch(path: String) -> Result<(), String> {
     use std::process::Command;
-    // Use 'start' command to launch .lnk files or executables
-    if cfg!(windows) {
-        Command::new("cmd")
-            .args(["/c", "start", "", &path])
-            .spawn()
-            .map_err(|e| e.to_string())?;
+    // Handle shell items (Recycle Bin, Control Panel)
+    if path.starts_with("shell:::") {
+        if cfg!(windows) {
+            Command::new("explorer.exe")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
     } else {
-        Command::new(&path).spawn().map_err(|e| e.to_string())?;
+        // Use 'start' command to launch .lnk files or executables
+        if cfg!(windows) {
+            Command::new("cmd")
+                .args(["/c", "start", "", &path])
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            Command::new(&path).spawn().map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -678,8 +695,11 @@ pub fn app_shortcut_icon(app: AppHandle, icon_filename: String) -> Result<String
     }
     let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
     let icon_path = app_data_dir.join("icons").join(&icon_filename);
-    let icon_path_str = icon_path.to_string_lossy().to_string();
-    Ok(format!("file://{}", icon_path_str.replace('\\', "/")))
+
+    // Read PNG file and convert to base64 data URI
+    let png_data = std::fs::read(&icon_path).map_err(|e| format!("Failed to read icon: {}", e))?;
+    let base64 = base64::engine::general_purpose::STANDARD.encode(&png_data);
+    Ok(format!("data:image/png;base64,{}", base64))
 }
 
 /// Clear all cached icons (for testing/regeneration)
@@ -694,4 +714,34 @@ pub fn clear_all_icons(app: AppHandle) -> Result<(), String> {
 pub fn regenerate_shortcut_icon(app: AppHandle, _id: i64, icon_filename: String) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
     icon::regenerate_icon(&icon_filename, &app_data_dir)
+}
+
+/// Re-extract icons for shortcuts with old cache versions
+#[tauri::command]
+pub fn reextract_old_icons(app: AppHandle, db: State<Db>) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
+
+    // Get all shortcuts with their icon paths and filenames
+    let shortcuts: Vec<(i64, String, Option<String>)> = db.with(|c| {
+        let mut s = c.prepare("SELECT id,icon,icon_filename FROM app_shortcuts")?;
+        let rows = s.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
+        rows.collect()
+    }).map_err(|e| e.to_string())?;
+
+    // Re-extract icons that need it
+    let updated = icon::reextract_old_icons(&shortcuts, &app_data_dir);
+
+    // Update database with new filenames
+    for (id, new_filename) in updated {
+        db.with(|c| {
+            c.execute(
+                "UPDATE app_shortcuts SET icon_filename = ?1 WHERE id = ?2",
+                params![new_filename, id],
+            )
+        }).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }

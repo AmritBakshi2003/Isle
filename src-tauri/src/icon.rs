@@ -5,15 +5,25 @@ use std::fs;
 use std::hash::Hasher;
 use std::path::PathBuf;
 use std::os::windows::ffi::OsStrExt;
-use windows::Win32::UI::Shell::SHGetFileInfoW;
-use windows::Win32::UI::Shell::SHFILEINFOW;
-use windows::Win32::UI::Shell::SHGFI_ICON;
-use windows::Win32::UI::Shell::SHGFI_LARGEICON;
-use windows::Win32::UI::Shell::SHGFI_USEFILEATTRIBUTES;
-use windows::Win32::UI::WindowsAndMessaging::DestroyIcon;
-use windows::Win32::UI::WindowsAndMessaging::DrawIconEx;
-use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+use windows::Win32::UI::Shell::SHCreateItemFromParsingName;
+use windows::Win32::UI::Shell::IShellItemImageFactory;
+use windows::Win32::UI::Shell::SIIGBF_BIGGERSIZEOK;
+use windows::Win32::UI::Shell::SIIGBF_ICONONLY;
+use windows::Win32::System::Com::CoInitializeEx;
+use windows::Win32::System::Com::COINIT_APARTMENTTHREADED;
+use windows::Win32::Graphics::Gdi::GetDIBits;
+use windows::Win32::Graphics::Gdi::DeleteObject;
+use windows::Win32::Graphics::Gdi::GetDC;
+use windows::Win32::Graphics::Gdi::ReleaseDC;
+use windows::Win32::Graphics::Gdi::BITMAPINFO;
+use windows::Win32::Graphics::Gdi::BITMAPINFOHEADER;
+use windows::Win32::Graphics::Gdi::BI_RGB;
+use windows::Win32::Graphics::Gdi::DIB_RGB_COLORS;
+use windows::Win32::Foundation::HWND;
 use windows::core::PCWSTR;
+
+const ICON_SIZE: i32 = 128;
+const CACHE_VERSION: &str = "v3";
 
 /// Extract icon from an executable and save as PNG
 /// Returns the filename of the saved icon, or error if failed
@@ -22,9 +32,10 @@ pub fn extract_icon_from_path(exe_path: &str, app_data_dir: &std::path::Path) ->
     let icons_dir = app_data_dir.join("icons");
     fs::create_dir_all(&icons_dir).map_err(|e| e.to_string())?;
 
-    // Generate unique filename based on executable path hash
+    // Generate unique filename based on executable path hash + cache version
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     hasher.write(exe_path.as_bytes());
+    hasher.write(CACHE_VERSION.as_bytes());
     let hash_value = hasher.finish();
     let icon_filename = format!("icon_{}.png", hash_value);
     let icon_path = icons_dir.join(&icon_filename);
@@ -34,18 +45,24 @@ pub fn extract_icon_from_path(exe_path: &str, app_data_dir: &std::path::Path) ->
         return Ok(icon_filename);
     }
 
-    // Try to extract actual Windows icon
-    if let Ok(()) = extract_windows_icon(exe_path, &icon_path) {
-        return Ok(icon_filename);
+    // Initialize COM (ignore "already initialized" error)
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
 
-    // Fallback to gradient icon if Windows icon extraction fails
-    create_app_icon(&icon_path, exe_path).map_err(|e| e.to_string())?;
-
-    Ok(icon_filename)
+    // Try to extract actual Windows icon
+    match extract_windows_icon(exe_path, &icon_path) {
+        Ok(()) => Ok(icon_filename),
+        Err(e) => {
+            eprintln!("Icon extraction failed for {}: {}", exe_path, e);
+            // Fallback to gradient icon if Windows icon extraction fails
+            create_app_icon(&icon_path, exe_path).map_err(|e| e.to_string())?;
+            Ok(icon_filename)
+        }
+    }
 }
 
-/// Extract actual Windows icon from executable using SHGetFileInfoW
+/// Extract actual Windows icon from executable using IShellItemImageFactory
 fn extract_windows_icon(exe_path: &str, output_path: &PathBuf) -> Result<(), String> {
     use std::ffi::OsStr;
 
@@ -55,63 +72,42 @@ fn extract_windows_icon(exe_path: &str, output_path: &PathBuf) -> Result<(), Str
         .chain(std::iter::once(0))
         .collect();
 
-    let mut shfi = SHFILEINFOW::default();
-
     unsafe {
-        let result = SHGetFileInfoW(
+        // Create IShellItem from parsing name
+        let shell_item: IShellItemImageFactory = SHCreateItemFromParsingName(
             PCWSTR(path_wide.as_ptr()),
-            FILE_FLAGS_AND_ATTRIBUTES(0),
-            Some(&mut shfi),
-            std::mem::size_of::<SHFILEINFOW>() as u32,
-            SHGFI_ICON | SHGFI_LARGEICON | SHGFI_USEFILEATTRIBUTES,
-        );
+            None,
+        ).map_err(|e| format!("SHCreateItemFromParsingName failed: {}", e))?;
 
-        if result == 0 {
-            return Err("SHGetFileInfoW failed".to_string());
-        }
+        // Get image at 128x128
+        let hbitmap = shell_item.GetImage(
+            windows::Win32::Foundation::SIZE { cx: ICON_SIZE, cy: ICON_SIZE },
+            SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
+        ).map_err(|e| format!("GetImage failed: {}", e))?;
 
-        if shfi.hIcon.is_invalid() {
-            return Err("Invalid icon handle".to_string());
-        }
+        // Convert HBITMAP to PNG
+        let result = bitmap_to_png(hbitmap, output_path);
 
-        // Convert HICON to PNG
-        let result = icon_to_png(shfi.hIcon, output_path);
-
-        let _ = DestroyIcon(shfi.hIcon);
+        let _ = DeleteObject(hbitmap);
 
         result
     }
 }
 
-/// Convert Windows HICON to PNG file
-fn icon_to_png(hicon: windows::Win32::UI::WindowsAndMessaging::HICON, output_path: &PathBuf) -> Result<(), String> {
-    use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleDC,
-        SelectObject,
-        DeleteObject,
-        DeleteDC,
-        GetDC,
-        ReleaseDC,
-        CreateDIBSection,
-        BITMAPINFO,
-        BITMAPINFOHEADER,
-        BI_RGB,
-        DIB_RGB_COLORS,
-    };
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::DI_NORMAL;
-
+/// Convert Windows HBITMAP to PNG file
+fn bitmap_to_png(hbitmap: windows::Win32::Graphics::Gdi::HBITMAP, output_path: &PathBuf) -> Result<(), String> {
     unsafe {
         let hdc = GetDC(HWND::default());
         if hdc.is_invalid() {
             return Err("GetDC failed".to_string());
         }
 
-        let bmi = BITMAPINFO {
+        // Get bitmap info
+        let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: 48,
-                biHeight: 48 * 2, // Positive for bottom-up DIB
+                biWidth: ICON_SIZE,
+                biHeight: -ICON_SIZE, // Negative for top-down DIB
                 biPlanes: 1,
                 biBitCount: 32,
                 biCompression: BI_RGB.0,
@@ -124,76 +120,70 @@ fn icon_to_png(hicon: windows::Win32::UI::WindowsAndMessaging::HICON, output_pat
             bmiColors: [Default::default()],
         };
 
-        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-        let hbitmap = CreateDIBSection(
+        let mut bits: Vec<u8> = vec![0; (ICON_SIZE * ICON_SIZE * 4) as usize];
+
+        let lines_copied = GetDIBits(
             hdc,
-            &bmi,
+            hbitmap,
+            0,
+            ICON_SIZE as u32,
+            Some(bits.as_mut_ptr() as *mut std::ffi::c_void),
+            &mut bmi,
             DIB_RGB_COLORS,
-            &mut bits,
-            None,
-            0,
-        ).map_err(|e| e.to_string())?;
-
-        let hdc_mem = CreateCompatibleDC(hdc);
-        if hdc_mem.is_invalid() {
-            ReleaseDC(HWND::default(), hdc);
-            let _ = DeleteObject(hbitmap);
-            return Err("CreateCompatibleDC failed".to_string());
-        }
-
-        let old_bitmap = SelectObject(hdc_mem, hbitmap);
-
-        // Draw icon to bitmap
-        let _ = DrawIconEx(
-            hdc_mem,
-            0,
-            0,
-            hicon,
-            48,
-            48,
-            0,
-            None,
-            DI_NORMAL,
         );
 
-        SelectObject(hdc_mem, old_bitmap);
-        let _ = DeleteDC(hdc_mem);
         ReleaseDC(HWND::default(), hdc);
 
-        // Convert bitmap data to PNG
-        if bits.is_null() {
-            let _ = DeleteObject(hbitmap);
-            return Err("Null bitmap bits".to_string());
+        if lines_copied == 0 {
+            return Err("GetDIBits failed".to_string());
         }
 
-        let width = 48;
-        let height = 48;
-        let mut image_data = Vec::with_capacity((width * height * 4) as usize);
+        // Convert premultiplied BGRA to straight-alpha RGBA
+        let mut has_alpha = false;
+        let mut image_data = Vec::with_capacity((ICON_SIZE * ICON_SIZE * 4) as usize);
 
-        for y in 0..height {
-            for x in 0..width {
-                let pixel_offset = ((height - 1 - y) * width + x) * 4;
-                let bits_u8 = bits as *const u8;
-                let b = *bits_u8.add(pixel_offset as usize);
-                let g = *bits_u8.add((pixel_offset + 1) as usize);
-                let r = *bits_u8.add((pixel_offset + 2) as usize);
-                let a = *bits_u8.add((pixel_offset + 3) as usize);
+        for i in (0..bits.len()).step_by(4) {
+            let b = bits[i];
+            let g = bits[i + 1];
+            let r = bits[i + 2];
+            let a = bits[i + 3];
 
-                // Pre-multiply alpha
+            if a > 0 {
+                has_alpha = true;
+            }
+
+            let (r, g, b, a) = if a == 0 {
+                (r, g, b, 255) // Fully transparent pixels become opaque
+            } else if a == 255 {
+                (r, g, b, a) // Already straight alpha
+            } else {
+                // Convert premultiplied to straight alpha
                 let a_f = a as f32 / 255.0;
-                image_data.push((r as f32 * a_f) as u8);
-                image_data.push((g as f32 * a_f) as u8);
-                image_data.push((b as f32 * a_f) as u8);
-                image_data.push(a);
+                (
+                    (r as f32 / a_f).min(255.0) as u8,
+                    (g as f32 / a_f).min(255.0) as u8,
+                    (b as f32 / a_f).min(255.0) as u8,
+                    a,
+                )
+            };
+
+            image_data.push(r);
+            image_data.push(g);
+            image_data.push(b);
+            image_data.push(a);
+        }
+
+        // If no alpha channel found, set all to opaque
+        if !has_alpha {
+            for i in (3..image_data.len()).step_by(4) {
+                image_data[i] = 255;
             }
         }
 
-        let image: image::RgbaImage = image::ImageBuffer::from_raw(width, height, image_data)
+        let image: image::RgbaImage = image::ImageBuffer::from_raw(ICON_SIZE as u32, ICON_SIZE as u32, image_data)
             .ok_or("Failed to create image buffer")?;
 
         image.save(output_path).map_err(|e| e.to_string())?;
-
-        let _ = DeleteObject(hbitmap);
 
         Ok(())
     }
@@ -304,5 +294,43 @@ pub fn regenerate_icon(icon_filename: &str, app_data_dir: &std::path::Path) -> R
         fs::remove_file(icon_path).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Check if icon filename uses the current cache version
+pub fn is_current_cache_version(icon_filename: &str) -> bool {
+    icon_filename.starts_with("icon_") && icon_filename.contains("_")
+}
+
+/// Re-extract icons for shortcuts with old cache versions
+pub fn reextract_old_icons(
+    shortcuts: &[(i64, String, Option<String>)],
+    app_data_dir: &std::path::Path,
+) -> Vec<(i64, String)> {
+    let mut updated = Vec::new();
+
+    for (id, icon_path, icon_filename) in shortcuts {
+        let needs_reextract = match icon_filename {
+            Some(filename) => {
+                // Check if file exists and uses current cache version
+                let icon_full_path = app_data_dir.join("icons").join(filename);
+                !icon_full_path.exists() || !is_current_cache_version(filename)
+            }
+            None => true, // No icon at all, needs extraction
+        };
+
+        if needs_reextract {
+            match extract_icon_from_path(icon_path, app_data_dir) {
+                Ok(new_filename) => {
+                    eprintln!("Re-extracted icon for {}: {}", icon_path, new_filename);
+                    updated.push((*id, new_filename));
+                }
+                Err(e) => {
+                    eprintln!("Failed to re-extract icon for {}: {}", icon_path, e);
+                }
+            }
+        }
+    }
+
+    updated
 }
 

@@ -202,6 +202,7 @@ function mock(cmd, a) {
     case 'app_shortcut_icon': return '';
     case 'clear_all_icons': console.info('[mock] clear_all_icons'); return;
     case 'regenerate_shortcut_icon': console.info('[mock] regenerate_shortcut_icon'); return;
+    case 'reextract_old_icons': console.info('[mock] reextract_old_icons'); return;
     default: throw `mock: unknown command ${cmd}`;
   }
 }
