@@ -603,14 +603,14 @@ pub fn enumerate_apps() -> Result<Vec<apps::AppShortcut>, String> {
 #[tauri::command]
 pub fn app_shortcuts_list(db: State<Db>) -> Result<Vec<apps::AppShortcut>, String> {
     db.with(|c| {
-        let mut s = c.prepare("SELECT id,name,path,icon_filename FROM app_shortcuts ORDER BY name")?;
+        let mut s = c.prepare("SELECT id,name,path,icon,icon_filename FROM app_shortcuts ORDER BY name")?;
         let rows = s.query_map([], |r| {
             Ok(apps::AppShortcut {
                 id: Some(r.get(0)?),
                 name: r.get(1)?,
                 path: r.get(2)?,
-                icon: None,
-                icon_filename: r.get(3)?,
+                icon: r.get(3)?,
+                icon_filename: r.get(4)?,
             })
         })?;
         rows.collect()
@@ -619,15 +619,16 @@ pub fn app_shortcuts_list(db: State<Db>) -> Result<Vec<apps::AppShortcut>, Strin
 
 /// Add an app shortcut
 #[tauri::command]
-pub fn app_shortcut_add(app: AppHandle, db: State<Db>, name: String, path: String) -> Result<i64, String> {
-    // Extract icon from the executable
+pub fn app_shortcut_add(app: AppHandle, db: State<Db>, name: String, path: String, icon: Option<String>) -> Result<i64, String> {
+    // Extract icon from the resolved target executable (not the .lnk)
     let app_data_dir = app.path().app_data_dir().map_err(e2s)?;
-    let icon_filename = icon::extract_icon_from_path(&path, &app_data_dir).ok();
+    let icon_target = icon.as_ref().unwrap_or(&path);
+    let icon_filename = icon::extract_icon_from_path(icon_target, &app_data_dir).ok();
 
     db.with(|c| {
         c.execute(
-            "INSERT INTO app_shortcuts(name,path,icon_filename) VALUES(?1,?2,?3)",
-            params![name, path, icon_filename],
+            "INSERT INTO app_shortcuts(name,path,icon,icon_filename) VALUES(?1,?2,?3,?4)",
+            params![name, path, icon, icon_filename],
         )?;
         Ok(c.last_insert_rowid())
     })

@@ -71,6 +71,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("7", "UPDATE app_shortcuts SET icon_filename = NULL"),
     // v8: Clear icon filenames again to force regeneration with native Windows icon extraction
     ("8", "UPDATE app_shortcuts SET icon_filename = NULL"),
+    // v9: Add icon column to store resolved target path for icon extraction
+    ("9", "ALTER TABLE app_shortcuts ADD COLUMN icon TEXT"),
 ];
 
 impl Db {

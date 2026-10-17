@@ -33,7 +33,7 @@
 
   async function addShortcut(app) {
     try {
-      await call('app_shortcut_add', { name: app.name, path: app.path });
+      await call('app_shortcut_add', { name: app.name, path: app.path, icon: app.icon });
       toast(`Added ${app.name}`);
       await loadShortcuts();
       // Force reload icon URLs after adding new shortcut

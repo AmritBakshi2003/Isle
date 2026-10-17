@@ -49,6 +49,7 @@ fn scan_directory(entries: fs::ReadDir, apps: &mut Vec<AppShortcut>) {
             }
         } else if path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("lnk")) {
             // Use the .lnk file path directly
+            // Windows SHGetFileInfoW can extract icons from .lnk files natively
             let name = path.file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("Unknown")
@@ -57,8 +58,8 @@ fn scan_directory(entries: fs::ReadDir, apps: &mut Vec<AppShortcut>) {
             apps.push(AppShortcut {
                 id: None,
                 name,
-                path: path_str,
-                icon: None,
+                path: path_str.clone(),
+                icon: Some(path_str), // Use .lnk path for icon extraction (Windows handles it)
                 icon_filename: None,
             });
         }
