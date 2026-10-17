@@ -12,6 +12,18 @@
   let availableApps = $state([]);
   let showAppPicker = $state(false);
   let searchQuery = $state('');
+  let highlightedIndex = $state(0);
+  let appIconUrls = $state({});
+
+  // Check if app is already added
+  function isAppAdded(app) {
+    const appPath = app.path;
+    const appTarget = app.target;
+    return shortcuts.some(s => 
+      s.path === appPath || 
+      (appTarget && s.target === appTarget)
+    );
+  }
 
   async function loadShortcuts() {
     try {
@@ -33,7 +45,14 @@
 
   async function addShortcut(app) {
     try {
-      await call('app_shortcut_add', { name: app.name, path: app.path, icon: app.icon });
+      await call('app_shortcut_add', {
+        name: app.name,
+        path: app.path,
+        icon: app.icon,
+        target: app.target,
+        group: app.group,
+        hidden: app.hidden
+      });
       toast(`Added ${app.name}`);
       await loadShortcuts();
       // Force reload icon URLs after adding new shortcut
@@ -136,7 +155,70 @@
     loadAvailableApps();
     showAppPicker = true;
     searchQuery = '';
+    highlightedIndex = 0;
+    appIconUrls = {};
+    // Autofocus search input after modal opens
+    setTimeout(() => {
+      const searchInput = document.querySelector('.search-input');
+      if (searchInput) searchInput.focus();
+    }, 100);
   }
+
+  // Load app icon lazily
+  async function loadAppIcon(app) {
+    if (appIconUrls[app.path]) return; // Already cached
+
+    try {
+      const icon = app.icon || app.path;
+      const iconUrl = await call('extract_app_icon', { path: icon });
+      if (iconUrl) {
+        appIconUrls[app.path] = iconUrl;
+      }
+    } catch (e) {
+      console.error('Failed to load app icon:', e);
+    }
+  }
+
+  // Keyboard navigation
+  function handleKeydown(e) {
+    if (!showAppPicker) return;
+
+    if (e.key === 'Escape') {
+      showAppPicker = false;
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      highlightedIndex = Math.min(highlightedIndex + 1, filteredApps.length - 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      highlightedIndex = Math.max(highlightedIndex - 1, 0);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filteredApps[highlightedIndex]) {
+        addShortcut(filteredApps[highlightedIndex]);
+      }
+    }
+  }
+
+  // Lazy load icons for visible apps
+  $effect(() => {
+    if (!showAppPicker) return;
+
+    // Load icons for visible apps (first 20, or around highlighted index)
+    const visibleIndices = [];
+    for (let i = Math.max(0, highlightedIndex - 5); i < Math.min(filteredApps.length, highlightedIndex + 15); i++) {
+      visibleIndices.push(i);
+    }
+
+    for (const idx of visibleIndices) {
+      const app = filteredApps[idx];
+      if (app) {
+        loadAppIcon(app);
+      }
+    }
+  });
 
   // Windows native tools
   function openCalc() {
@@ -166,11 +248,70 @@
     }
   }
 
-  let filteredApps = $derived(availableApps.filter(app => {
-    const query = searchQuery.toLowerCase();
-    return app.name.toLowerCase().includes(query) ||
-           app.path.toLowerCase().includes(query);
-  }));
+  // Search scoring: name only, hidden entries searchable only when query is typed
+  let filteredApps = $derived(() => {
+    const query = searchQuery.toLowerCase().trim();
+    
+    if (!query) {
+      // Empty query: show only non-hidden entries
+      return availableApps.filter(app => !app.hidden);
+    }
+    
+    // Non-empty query: search ALL entries including hidden ones, sort by score
+    return availableApps
+      .map(app => ({ app, score: calculateSearchScore(app.name, query) }))
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score || a.app.name.localeCompare(b.app.name))
+      .map(({ app }) => app);
+  });
+
+  function calculateSearchScore(name, query) {
+    const nameLower = name.toLowerCase();
+    
+    // Exact match
+    if (nameLower === query) return 100;
+    
+    // Starts with query
+    if (nameLower.startsWith(query)) return 80;
+    
+    // Word starts with query
+    const words = nameLower.split(/\s+/);
+    for (const word of words) {
+      if (word.startsWith(query)) return 60;
+    }
+    
+    // Contains query
+    if (nameLower.includes(query)) return 40;
+    
+    // Fuzzy subsequence match
+    if (isFuzzyMatch(nameLower, query)) return 20;
+    
+    return 0;
+  }
+
+  function isFuzzyMatch(text, query) {
+    let queryIdx = 0;
+    for (const char of text) {
+      if (char === query[queryIdx]) {
+        queryIdx++;
+        if (queryIdx === query.length) return true;
+      }
+    }
+    return false;
+  }
+
+  function highlightMatch(name, query) {
+    if (!query) return name;
+    const queryLower = query.toLowerCase();
+    const nameLower = name.toLowerCase();
+    const idx = nameLower.indexOf(queryLower);
+    if (idx === -1) return name;
+    return name.slice(0, idx) + '<mark>' + name.slice(idx, idx + query.length) + '</mark>' + name.slice(idx + query.length);
+  }
+
+  function getHighlightedName(name, query) {
+    return highlightMatch(name, query);
+  }
 </script>
 
 <div class="utility-drawer">
@@ -251,32 +392,70 @@
   <div
     class="modal-overlay"
     onclick={() => showAppPicker = false}
-    onkeydown={(e) => { if (e.key === 'Escape') showAppPicker = false; }}
     role="button"
     tabindex="0"
     aria-label="Close modal"
   >
-    <div class="modal" onclick={(e) => e.stopPropagation()}>
+    <div class="modal" onclick={(e) => e.stopPropagation()} onkeydown={handleKeydown} role="dialog" aria-label="Add app shortcut" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h3>Add App Shortcut</h3>
         <button class="close-btn" onclick={() => showAppPicker = false} aria-label="Close">
           <Icon name="close" size={20} />
         </button>
       </div>
-      <input
-        class="search-input"
-        bind:value={searchQuery}
-        placeholder="Search apps..."
-        aria-label="Search apps"
-      />
+      <div class="search-wrapper">
+        <input
+          class="search-input"
+          bind:value={searchQuery}
+          placeholder="Search apps..."
+          aria-label="Search apps"
+          onfocus={() => this?.select()}
+        />
+        {#if searchQuery}
+          <button class="clear-btn" onclick={() => searchQuery = ''} aria-label="Clear search">
+            <Icon name="close" size={14} />
+          </button>
+        {/if}
+      </div>
       <div class="apps-list">
         {#if filteredApps.length === 0}
-          <div class="no-results">No apps found</div>
+          <div class="no-results">No apps found "{searchQuery}"</div>
         {:else}
-          {#each filteredApps as app (app.path)}
-            <button class="app-item" onclick={() => addShortcut(app)}>
-              <span class="app-name">{app.name}</span>
-              <Icon name="plus" size={16} />
+          {#each filteredApps as app, index (app.path)}
+            <button
+              type="button"
+              class="app-item"
+              class:highlighted={index === highlightedIndex}
+              onclick={() => addShortcut(app)}
+              onmouseenter={() => highlightedIndex = index}
+              aria-label={`Add ${app.name}`}
+            >
+              <div class="app-icon">
+                {#if appIconUrls[app.path]}
+                  <img
+                    src={appIconUrls[app.path]}
+                    alt={app.name}
+                    class="app-icon-img"
+                    onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }}
+                  />
+                {/if}
+                <div class="app-icon-placeholder" style:display={appIconUrls[app.path] ? 'none' : 'flex'}>
+                  <Icon name={getAppIconName(app)} size={20} />
+                </div>
+              </div>
+              <div class="app-info">
+                <div class="app-name" use:innerHTML={getHighlightedName(app.name, searchQuery)}></div>
+                {#if app.group}
+                  <div class="app-group">{app.group}</div>
+                {/if}
+              </div>
+              <div class="app-action">
+                {#if isAppAdded(app)}
+                  <Icon name="check" size={16} class="check-icon" />
+                {:else}
+                  <Icon name="plus" size={16} />
+                {/if}
+              </div>
             </button>
           {/each}
         {/if}
@@ -490,7 +669,7 @@
   .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(0, 0, 0, 0.5);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -499,12 +678,14 @@
 
   .modal {
     background: var(--bg);
+    border: 1px solid var(--row-hi);
     border-radius: 12px;
     width: 90%;
-    max-width: 400px;
-    max-height: 80vh;
+    max-width: 500px;
+    max-height: 70vh;
     display: flex;
     flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   }
 
   .modal-header {
@@ -518,6 +699,148 @@
   .modal-header h3 {
     margin: 0;
     font-size: 16px;
+  }
+
+  .search-wrapper {
+    position: relative;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--row-hi);
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 10px 36px 10px 12px;
+    border: 1px solid var(--row-hi);
+    border-radius: 8px;
+    background: var(--row);
+    color: var(--ink);
+    font-size: 14px;
+    outline: none;
+  }
+
+  .search-input:focus {
+    border-color: var(--accent);
+  }
+
+  .clear-btn {
+    position: absolute;
+    right: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--dim);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+  }
+
+  .clear-btn:hover {
+    background: var(--row-hi);
+    color: var(--ink);
+  }
+
+  .apps-list {
+    overflow-y: auto;
+    max-height: calc(70vh - 120px);
+    padding: 8px;
+  }
+
+  .app-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border: none;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+  }
+
+  .app-item:hover {
+    background: var(--row-hi);
+  }
+
+  .app-item.highlighted {
+    background: var(--row-hi);
+    border: 1px solid var(--accent);
+  }
+
+  .app-icon {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .app-icon-img {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    object-fit: contain;
+  }
+
+  .app-icon-placeholder {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--row-hi);
+    border-radius: 6px;
+    color: var(--dim);
+  }
+
+  .app-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .app-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink);
+    word-break: break-word;
+  }
+
+  .app-name :global(mark) {
+    background: var(--accent);
+    color: white;
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+
+  .app-group {
+    font-size: 11px;
+    color: var(--dim);
+    margin-top: 2px;
+  }
+
+  .app-action {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dim);
+  }
+
+  .no-results {
+    padding: 32px;
+    text-align: center;
+    color: var(--dim);
   }
 
   .close-btn {

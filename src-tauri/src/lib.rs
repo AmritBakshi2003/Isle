@@ -212,6 +212,7 @@ pub fn run() {
             commands::clear_all_icons,
             commands::regenerate_shortcut_icon,
             commands::reextract_old_icons,
+            commands::extract_app_icon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Isle");

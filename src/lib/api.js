@@ -184,14 +184,14 @@ function mock(cmd, a) {
     case 'battery_get': return { charging: false, level: 0.72 };
     case 'open_native': console.info('[mock] open_native:', a.app); return;
     case 'enumerate_apps': return [
-      { id: null, name: 'Google Chrome', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon_filename: null },
-      { id: null, name: 'Visual Studio Code', path: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon_filename: null },
-      { id: null, name: 'Spotify', path: 'C:\\Program Files\\Spotify\\Spotify.exe', icon: 'C:\\Program Files\\Spotify\\Spotify.exe', icon_filename: null },
+      { id: null, name: 'Google Chrome', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon_filename: null, target: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', group: null, hidden: false },
+      { id: null, name: 'Visual Studio Code', path: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon_filename: null, target: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', group: null, hidden: false },
+      { id: null, name: 'Spotify', path: 'C:\\Program Files\\Spotify\\Spotify.exe', icon: 'C:\\Program Files\\Spotify\\Spotify.exe', icon_filename: null, target: 'C:\\Program Files\\Spotify\\Spotify.exe', group: null, hidden: false },
     ];
     case 'app_shortcuts_list': return D.appShortcuts || [];
     case 'app_shortcut_add': {
       if (!D.appShortcuts) D.appShortcuts = [];
-      D.appShortcuts.push({ id: ++seq, name: a.name, path: a.path, icon: a.icon, icon_filename: null });
+      D.appShortcuts.push({ id: ++seq, name: a.name, path: a.path, icon: a.icon, icon_filename: null, target: a.target, group: a.group, hidden: a.hidden });
       return seq;
     }
     case 'app_shortcut_remove': {
@@ -203,6 +203,7 @@ function mock(cmd, a) {
     case 'clear_all_icons': console.info('[mock] clear_all_icons'); return;
     case 'regenerate_shortcut_icon': console.info('[mock] regenerate_shortcut_icon'); return;
     case 'reextract_old_icons': console.info('[mock] reextract_old_icons'); return;
+    case 'extract_app_icon': console.info('[mock] extract_app_icon:', a.path); return 'data:image/png;base64,';
     default: throw `mock: unknown command ${cmd}`;
   }
 }

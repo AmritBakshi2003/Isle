@@ -73,6 +73,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("8", "UPDATE app_shortcuts SET icon_filename = NULL"),
     // v9: Add icon column to store resolved target path for icon extraction
     ("9", "ALTER TABLE app_shortcuts ADD COLUMN icon TEXT"),
+    // v10: Add target, group, and hidden columns for app picker filtering
+    ("10", "ALTER TABLE app_shortcuts ADD COLUMN target TEXT"),
+    ("10", "ALTER TABLE app_shortcuts ADD COLUMN group TEXT"),
+    ("10", "ALTER TABLE app_shortcuts ADD COLUMN hidden INTEGER DEFAULT 0"),
 ];
 
 impl Db {

@@ -126,7 +126,7 @@ fn scan_directory(entries: fs::ReadDir, apps: &mut Vec<AppShortcut>, group: Opti
                 id: None,
                 name,
                 path: path_str.clone(),
-                icon: Some(path_str),
+                icon: Some(path_str.clone()),
                 icon_filename: None,
                 target: Some(path_str.clone()),
                 group: group.clone(),
@@ -140,12 +140,6 @@ fn scan_directory(entries: fs::ReadDir, apps: &mut Vec<AppShortcut>, group: Opti
 fn filter_apps(apps: Vec<AppShortcut>) -> Vec<AppShortcut> {
     apps.into_iter()
         .filter(|app| {
-            // Skip if no target
-            let target = match &app.target {
-                Some(t) => t,
-                None => return false,
-            };
-
             // Skip unwanted name patterns
             let name_lower = app.name.to_lowercase();
             for pattern in UNWANTED_PATTERNS {
@@ -169,14 +163,12 @@ fn filter_apps(apps: Vec<AppShortcut>) -> Vec<AppShortcut> {
 /// Deduplicate by name (lowercase), preferring shorter path
 fn dedupe_apps(mut apps: Vec<AppShortcut>) -> Vec<AppShortcut> {
     apps.sort_by(|a, b| {
-        a.name.to_lowercase().cmp(&b.name.to_lowercase())
-            .then_with(|ord| {
-                if ord == std::cmp::Ordering::Equal {
-                    a.path.len().cmp(&b.path.len())
-                } else {
-                    ord
-                }
-            })
+        let name_cmp = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+        if name_cmp == std::cmp::Ordering::Equal {
+            a.path.len().cmp(&b.path.len())
+        } else {
+            name_cmp
+        }
     });
     apps.dedup_by(|a, b| a.name.to_lowercase() == b.name.to_lowercase());
 
