@@ -94,9 +94,9 @@ const D = {
     { id: 3, title: 'Book dentist', done: true, due: null, remind_min: 0, day: null, done_at: null, notified: false },
   ],
   events: [
-    { id: 1, title: 'Standup', start: at(10, 0), end: null, remind_min: 10, color: null },
-    { id: 2, title: 'Design review', start: at(15, 30), end: null, remind_min: 10, color: null },
-    { id: 3, title: 'Lunch with Asha', start: at(13, 0, 2), end: null, remind_min: 30, color: null },
+    { id: 1, title: 'Standup', start: at(10, 0), end: null, remind_min: 10, color: null, notified: false },
+    { id: 2, title: 'Design review', start: at(15, 30), end: null, remind_min: 10, color: null, notified: false },
+    { id: 3, title: 'Lunch with Asha', start: at(13, 0, 2), end: null, remind_min: 30, color: null, notified: false },
   ],
   clips: [
     { id: 1, text: 'https://tauri.app/start/', pinned: true, ts: sec() - 4000, file_path: null, file_name: null, file_type: null },
@@ -125,43 +125,64 @@ function mock(cmd, a) {
       M.sampled_at_ms = Date.now();
       emit('media://update', { ...M });
       return;
-    case 'task_list': return [...D.tasks].sort((x, y) => x.done - y.done || y.id - x.id);
-    case 'task_add': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: 0, day: null, done_at: null, notified: false }); return seq;
-    case 'task_add_full': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: a.remindMin ?? 15, day: a.day ?? null, done_at: null, notified: false }); return seq;
-    case 'task_add_with_reminder': D.tasks.push({ id: ++seq, title: a.title, done: false, due: a.due ?? null, remind_min: a.remindMin, day: null, done_at: null, notified: false }); return seq;
-    case 'task_cancel_reminder': { const t = D.tasks.find((x) => x.id === a.id); if (t) t.remind_min = 0; return; }
-    case 'task_toggle': { const t = D.tasks.find((x) => x.id === a.id); t.done = !t.done; return; }
-    case 'task_update': { const t = D.tasks.find((x) => x.id === a.id); if (t) { t.title = a.title; t.day = a.day; t.due = a.due; t.remind_min = a.remindMin; } return; }
-    case 'task_delete': return del('tasks', a.id);
-    case 'task_clear_done': D.tasks = D.tasks.filter((t) => !t.done); return;
-    case 'events_for_day': return D.events.filter((e) => e.start >= at(0, 0) && e.start < at(23, 59)).map(e => ({ ...e, in_progress: false }));
-    case 'month_event_days': return ['2025-01-15', '2025-01-20', '2025-01-25'];
-    case 'tasks_visible': {
-      const now = sec();
-      const todayStr = new Date().toISOString().split('T')[0];
-      const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-      return {
-        today: D.tasks.filter(t => !t.done && (t.day === todayStr || !t.day)),
-        tomorrow: D.tasks.filter(t => !t.done && (t.day === tomorrowStr)),
-        next_change_ts: now + 1800
-      };
+    case 'task_list': return [...D.tasks].sort((x, y) => x.done - y.done || y.id - x.id).map(t => ({ id: t.id, title: t.title, done: t.done }));
+    case 'task_add': {
+      const title = a.title?.trim();
+      if (!title) throw new Error('Task title cannot be empty');
+      D.tasks.push({ id: ++seq, title, done: false, due: null, remind_min: 0, day: null, done_at: null, notified: false });
+      return seq;
     }
-    case 'purge_expired': return;
+    case 'task_toggle': {
+      const t = D.tasks.find((x) => x.id === a.id);
+      if (t) t.done = !t.done;
+      return;
+    }
+    case 'task_delete': return del('tasks', a.id);
+    case 'task_clear_done': {
+      const beforeLen = D.tasks.length;
+      D.tasks = D.tasks.filter((t) => !t.done);
+      return beforeLen - D.tasks.length;
+    }
+    case 'events_for_day': {
+      const tzOffsetMin = a.tzOffsetMin ?? -new Date().getTimezoneOffset();
+      // Parse the date string and get start/end of that day
+      const [year, month, day] = a.date.split('-').map(Number);
+      const dayStart = new Date(year, month - 1, day, 0, 0, 0);
+      const dayEnd = new Date(year, month - 1, day, 23, 59, 59);
+      const startTs = Math.floor(dayStart.getTime() / 1000);
+      const endTs = Math.floor(dayEnd.getTime() / 1000);
+      return D.events.filter((e) => e.start >= startTs && e.start <= endTs);
+    }
+    case 'month_event_days': {
+      const tzOffsetMin = a.tzOffsetMin ?? -new Date().getTimezoneOffset();
+      // Return dates that have events (mock data for current month)
+      const now = new Date();
+      const year = a.year || now.getFullYear();
+      const month = a.month || now.getMonth() + 1;
+      // For mock, return some dates that would have events
+      return [`${year}-${String(month).padStart(2, '0')}-15`, `${year}-${String(month).padStart(2, '0')}-20`, `${year}-${String(month).padStart(2, '0')}-25`];
+    }
     case 'event_list': return D.events.filter((e) => e.start >= a.from && e.start < a.to).sort((x, y) => x.start - y.start);
     case 'event_add': {
-      const start = parseDateTime(a.date, a.start);
-      const end = a.end ? parseDateTime(a.date, a.end) : null;
-      D.events.push({ id: ++seq, title: a.title, start, end, remind_min: a.remindMin, color: a.color ?? null });
+      const start = a.start; // Unix seconds directly
+      const end = null;
+      D.events.push({ id: ++seq, title: a.title, start, end, remind_min: a.remindMin, color: a.color ?? null, notified: false });
       return seq;
     }
     case 'event_update': {
       const e = D.events.find((x) => x.id === a.id);
       if (e) {
+        const oldStart = e.start;
+        const oldRemind = e.remind_min;
         e.title = a.title;
-        e.start = parseDateTime(a.date, a.start);
-        e.end = a.end ? parseDateTime(a.date, a.end) : null;
+        e.start = a.start; // Unix seconds directly
+        e.end = a.end;
         e.remind_min = a.remindMin;
         e.color = a.color;
+        // Reset notified if start or remind_min changed
+        if (oldStart !== e.start || oldRemind !== e.remind_min) {
+          e.notified = 0;
+        }
       }
       return;
     }

@@ -66,6 +66,7 @@
   let autoDismissTimer;
   let hoverTimer;
   let chargingIndicatorTimer;
+  let t;
   let settingsLoaded = $state(false);
   let isHovering = $state(false);
   let showChargingIndicator = $state(false);
@@ -296,23 +297,23 @@
   }
 
   function openSettings() {
-    console.log('Opening settings...');
+
     call('open_settings').then(() => {
-      console.log('Settings opened successfully');
+
     }).catch((err) => {
       console.error('Failed to open settings:', err);
     });
   }
 
   function handleTabClick(tabId) {
-    console.log('Tab clicked:', tabId, 'Current ui.tab:', ui.tab);
+
     if (tabId === 'settings') {
       openSettings();
       // Switch back to music tab after opening settings
       ui.tab = 'music';
     } else {
       ui.tab = tabId;
-      console.log('Set ui.tab to:', ui.tab);
+
     }
   }
 

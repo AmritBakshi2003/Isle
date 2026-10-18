@@ -49,49 +49,13 @@ pub fn start(app: AppHandle) -> Scheduler {
 }
 
 /// Do everything that is due now; return how long to sleep.
-fn tick(app: &AppHandle, is_startup: bool) -> Duration {
+fn tick(app: &AppHandle, _is_startup: bool) -> Duration {
     let db = app.state::<Db>();
     let now = now();
     let mut next = now + 300;
 
-    // 0) Purge expired tasks at midnight
-    let tz_offset = Local::now().offset().local_minus_utc() / 60;
-    let local_now_sec = now + (tz_offset as i64 * 60);
-    let seconds_since_midnight = local_now_sec % 86400;
-    let is_midnight = seconds_since_midnight < 5; // Within 5 seconds of midnight
-    
-    if is_midnight {
-        let _ = crate::commands::purge_expired(db.clone(), now, tz_offset as i64);
-    }
-    
-    // Schedule next midnight
-    let next_midnight = now + (86400 - seconds_since_midnight);
-    next = next.min(next_midnight);
-
-    // 0.5) On startup, check for any task reminders that are already due but haven't fired
-    // This handles the case where the app was closed and a reminder time passed
-    if is_startup {
-        let overdue_reminders: Vec<(i64, String, i64)> = db
-            .with(|c| {
-                let mut s = c.prepare(
-                    "SELECT id,title,due FROM tasks WHERE done=0 AND due IS NOT NULL AND remind_min > 0 AND notified=0 AND due <= ?1",
-                )?;
-                let rows = s.query_map([now], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-                rows.collect()
-            })
-            .unwrap_or_default();
-        
-        for (id, title, due) in overdue_reminders {
-            // Notify immediately if due time is within the last 5 minutes (recently passed)
-            if due + 300 >= now {
-                let _ = actions::notify(app, &title, "Overdue");
-            }
-            // Mark as notified after checking
-            let _ = db.with(|c| c.execute("UPDATE tasks SET notified=1 WHERE id=?1", [id]));
-        }
-    }
-
-    // 1) Event reminders. Skip stale ones (more than 5 min past start) silently.
+    // 1) Event reminders. Fire once when now >= start - remind_min*60 and notified=0 and now < start + 300 (5-minute window after start).
+    // Never fire for events that already began more than 5 minutes ago; mark those notified=1 silently.
     let due: Vec<(i64, String, i64)> = db
         .with(|c| {
             let mut s = c.prepare(
@@ -103,13 +67,13 @@ fn tick(app: &AppHandle, is_startup: bool) -> Duration {
         .unwrap_or_default();
     
     for (id, title, starts) in due {
-        // Only show notification if the event hasn't already passed (more than 5 min ago)
-        if starts + 300 >= now {
+        // Only show notification if within the 5-minute window after start
+        if now < starts + 300 {
             let mins = ((starts - now) / 60).max(0);
             let body = if mins == 0 { "Starting now".to_string() } else { format!("In {mins} min") };
             let _ = actions::notify(app, &title, &body);
         }
-        // Mark as notified after checking, so stale events can be retried
+        // Mark as notified after checking (even if past the 5-minute window, to avoid retries)
         let _ = db.with(|c| c.execute("UPDATE events SET notified=1 WHERE id=?1", [id]));
     }
     
@@ -118,37 +82,6 @@ fn tick(app: &AppHandle, is_startup: bool) -> Duration {
         c.query_row("SELECT MIN(starts - remind_min*60) FROM events WHERE notified=0", [], |r| {
             r.get::<_, Option<i64>>(0)
         })
-    }) {
-        next = next.min(t);
-    }
-
-    // 2) Task reminders. Fire toasts for tasks with due dates and remind_min > 0.
-    let task_reminders: Vec<(i64, String, i64, i64)> = db
-        .with(|c| {
-            let mut s = c.prepare(
-                "SELECT id,title,due,remind_min FROM tasks WHERE done=0 AND due IS NOT NULL AND remind_min > 0 AND notified=0 AND due - remind_min*60 <= ?1",
-            )?;
-            let rows = s.query_map([now], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
-            rows.collect()
-        })
-        .unwrap_or_default();
-    
-    // Fire notifications for tasks whose reminder time has arrived
-    for (id, title, due, _remind_min) in task_reminders {
-        let mins_to_due = (due - now) / 60;
-        let body = if mins_to_due <= 0 { "Due now".to_string() } else { format!("Due in {} min", mins_to_due) };
-        let _ = actions::notify(app, &title, &body);
-        // Mark as notified after firing to avoid duplicates
-        let _ = db.with(|c| c.execute("UPDATE tasks SET notified=1 WHERE id=?1", [id]));
-    }
-    
-    // Calculate next task reminder time
-    if let Ok(Some(t)) = db.with(|c| {
-        c.query_row(
-            "SELECT MIN(due - remind_min*60) FROM tasks WHERE done=0 AND due IS NOT NULL AND remind_min > 0 AND notified=0",
-            [],
-            |r| r.get::<_, Option<i64>>(0)
-        )
     }) {
         next = next.min(t);
     }

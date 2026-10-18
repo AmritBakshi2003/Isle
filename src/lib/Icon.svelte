@@ -53,6 +53,11 @@
     x: '<path d="M18 6L6 18M6 6l12 12"/>',
     app: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>',
     console: '<path d="M20 7h-9l-2-9H5v17h17V7z"/><path d="M8 12h.01M8 16h.01M8 20h.01M12 12h.01M12 16h.01M12 20h.01M16 12h.01M16 16h.01M16 20h.01"/>',
+    bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+    'chevron-left': '<path d="M15 18l-6-6 6-6"/>',
+    'chevron-right': '<path d="M9 18l6-6-6-6"/>',
+    'chevron-up': '<path d="M18 15l-6-6-6 6"/>',
+    'chevron-down': '<path d="M6 9l6 6 6-6"/>',
   };
 </script>
 

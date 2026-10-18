@@ -1,753 +1,956 @@
 <!--
-  TaskCalendar.svelte: Unified Tasks & Calendar view
-  Left: Month grid with event dots
-  Right: Events section (top) and Tasks section (bottom) with Today/Tomorrow pills
+  TaskCalendar.svelte: NotchNook-style simplified Tasks & Calendar
+  Week strip calendar, events for selected day, plain task list
 -->
 <script>
   import { call, on } from '../lib/api.js';
   import { toast } from '../lib/state.svelte.js';
   import Icon from '../lib/Icon.svelte';
+  import { onMount, untrack } from 'svelte';
 
-  console.log('[TaskCalendar] Component script starting');
+  const EVENT_COLOR = 'var(--agenda-event)';
+  const TASK_COLOR = 'var(--agenda-task)';
+  const WEEK_START = 1; // Monday
 
-  const COMPLETED_TASK_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
-  const COLOR_SWATCHES = ['#ef4444', '#f97316', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6'];
-
+  // State
   let events = $state([]);
   let eventDays = $state([]);
-  let todayTasks = $state([]);
-  let tomorrowTasks = $state([]);
-  let selectedDate = $state(new Date().toISOString().split('T')[0]); // YYYY-MM-DD
-  let taskHorizon = $state('today'); // 'today' or 'tomorrow'
-  let nextChangeTs = $state(0);
-  let showEventForm = $state(false);
+  let tasks = $state([]);
+  let selectedDate = $state(new Date().toISOString().split('T')[0]);
+  let calendarExpanded = $state(false);
+  let showEventPopup = $state(false);
   let editingEvent = $state(null);
-  let editingTask = $state(null);
-  let undoStack = $state([]);
-  let refreshTimer = $state(null);
+  let weekOffset = $state(0); // Week offset from today
+
+  // Event form state
+  let eventTitle = $state('');
+  let eventDate = $state('');
+  let eventHour = $state(1);
+  let eventMinute = $state('00');
+  let eventAmPm = $state('PM');
+  let eventRemindMin = $state(10); // Default 10 min
+
+  // Task input state
   let newTaskInput = $state('');
 
-  // Timezone offset in minutes (cached, doesn't change)
-  const tzOffsetMin = -new Date().getTimezoneOffset() / 60;
-
-  // Today's date string (constant for this session)
-  const todayStr = new Date().toISOString().split('T')[0];
-
-  // Selected date as Date object (reactive to selectedDate)
-  let selectedDateObj = $derived.by(() => {
-    try {
-      const [year, month, day] = selectedDate.split('-').map(Number);
-      return new Date(year, month - 1, day);
-    } catch (e) {
-      console.error('[TaskCalendar] Error in selectedDateObj:', e);
-      return new Date();
-    }
-  });
-
-  // Year and month from selected date (reactive to selectedDate)
-  let currentYear = $derived.by(() => {
-    try {
-      return selectedDateObj.getFullYear();
-    } catch (e) {
-      console.error('[TaskCalendar] Error in currentYear:', e);
-      return new Date().getFullYear();
-    }
-  });
-  let currentMonth = $derived.by(() => {
-    try {
-      return selectedDateObj.getMonth() + 1;
-    } catch (e) {
-      console.error('[TaskCalendar] Error in currentMonth:', e);
-      return new Date().getMonth() + 1;
-    }
-  });
-
-  // Check if selected date is today (reactive to selectedDate)
-  let isToday = $derived.by(() => {
-    try {
-      return selectedDate === todayStr;
-    } catch (e) {
-      console.error('[TaskCalendar] Error in isToday:', e);
-      return false;
-    }
-  });
-
-  // Get calendar days for current month (reactive to selectedDate and eventDays)
-  let calendarDays = $derived.by(() => {
-    try {
-      const year = currentYear;
-      const month = currentMonth;
-      const firstDay = new Date(year, month - 1, 1);
-      const lastDay = new Date(year, month, 0);
-      const startPadding = firstDay.getDay(); // 0 = Sunday
-      const totalDays = lastDay.getDate();
-      
-      const days = [];
-      // Add padding days from previous month
-      for (let i = 0; i < startPadding; i++) {
-        days.push(null);
-      }
-      // Add actual days of month
-      for (let i = 1; i <= totalDays; i++) {
-        const date = new Date(year, month - 1, i);
-        const dateStr = date.toISOString().split('T')[0];
-        const isToday = dateStr === todayStr;
-        const hasEvent = eventDays.includes(dateStr);
-        days.push({ day: i, date: dateStr, isToday, hasEvent });
-      }
-      return days;
-    } catch (e) {
-      console.error('[TaskCalendar] Error in calendarDays:', e);
-      return [];
-    }
-  });
-
-  // Load event days for the month
-  async function loadEventDays() {
-    console.log('[TaskCalendar] Loading event days for', currentYear, currentMonth);
-    try {
-      eventDays = await call('month_event_days', {
-        year: currentYear,
-        month: currentMonth,
-        tzOffsetMin: tzOffsetMin
-      });
-      console.log('[TaskCalendar] Event days loaded:', eventDays);
-    } catch (e) {
-      console.error('[TaskCalendar] Failed to load event days:', e);
-      eventDays = []; // Fallback to empty array
-    }
+  // Timezone helper
+  function tzOffsetMin() {
+    return -new Date().getTimezoneOffset();
   }
 
-  // Load events for selected date
+  // Today's local date
+  const todayStr = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  })();
+
+  // Derived: selected date as Date object
+  let selectedDateObj = $derived.by(() => {
+    const [year, month, day] = selectedDate.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  });
+
+  // Derived: is selected date today?
+  let isToday = $derived(selectedDate === todayStr);
+
+  // Derived: week strip days (7 days centered on today's date with offset)
+  let weekDays = $derived.by(() => {
+    const now = new Date();
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (weekOffset * 7));
+    const dayOfWeek = date.getDay();
+    const diff = (dayOfWeek - WEEK_START + 7) % 7;
+    date.setDate(date.getDate() - diff);
+    
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      days.push({
+        day: date.getDate(),
+        date: dateStr,
+        isToday: dateStr === todayStr,
+        hasEvent: eventDays.includes(dateStr)
+      });
+      date.setDate(date.getDate() + 1);
+    }
+    return days;
+  });
+
+  // Derived: full month calendar days
+  let calendarDays = $derived.by(() => {
+    const year = selectedDateObj.getFullYear();
+    const month = selectedDateObj.getMonth();
+    
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    
+    let startDay = firstDay.getDay() - WEEK_START;
+    if (startDay < 0) startDay += 7;
+    
+    const days = [];
+    for (let i = 0; i < startDay; i++) days.push(null);
+    for (let i = 1; i <= daysInMonth; i++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      days.push({
+        day: i,
+        date: dateStr,
+        isToday: dateStr === todayStr,
+        hasEvent: eventDays.includes(dateStr)
+      });
+    }
+    return days;
+  });
+
+  // Derived: events for selected day
+  let dayEvents = $derived.by(() => {
+    return events.filter(e => {
+      const eventDate = new Date(e.start * 1000);
+      const eventDateStr = `${eventDate.getFullYear()}-${String(eventDate.getMonth() + 1).padStart(2, '0')}-${String(eventDate.getDate()).padStart(2, '0')}`;
+      return eventDateStr === selectedDate;
+    });
+  });
+
+  // Derived: weekday letters
+  const weekdayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+  // 12-hour to 24-hour conversion
+  function to12hTo24h(hour12, minute, isPM) {
+    let hour24 = hour12;
+    if (isPM && hour12 !== 12) hour24 += 12;
+    if (!isPM && hour12 === 12) hour24 = 0;
+    return hour24 * 60 + parseInt(minute);
+  }
+
+  // Format time in 12-hour format
+  function formatTime24To12h(timestamp) {
+    const date = new Date(timestamp * 1000);
+    let hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours || 12;
+    return `${hours}:${String(minutes).padStart(2, '0')} ${ampm}`;
+  }
+
+  // Load functions
   async function loadEvents() {
-    console.log('[TaskCalendar] Loading events for', selectedDate);
     try {
-      const currentNow = Math.floor(Date.now() / 1000);
       events = await call('events_for_day', {
         date: selectedDate,
-        nowTs: currentNow,
-        tzOffsetMin: tzOffsetMin
+        tzOffsetMin: tzOffsetMin()
       });
-      console.log('[TaskCalendar] Events loaded:', events);
     } catch (e) {
-      console.error('[TaskCalendar] Failed to load events:', e);
-      events = []; // Fallback to empty array
+      console.error('Failed to load events:', e);
+      toast.error(e);
     }
   }
 
-  // Load tasks for today and tomorrow
+  async function loadEventDays() {
+    try {
+      const year = selectedDateObj.getFullYear();
+      const month = selectedDateObj.getMonth() + 1;
+      eventDays = await call('month_event_days', {
+        year,
+        month,
+        tzOffsetMin: tzOffsetMin()
+      });
+    } catch (e) {
+      console.error('Failed to load event days:', e);
+      toast.error(e);
+    }
+  }
+
   async function loadTasks() {
-    console.log('[TaskCalendar] Loading tasks');
     try {
-      const currentNow = Math.floor(Date.now() / 1000);
-      const result = await call('tasks_visible', {
-        nowTs: currentNow,
-        tzOffsetMin: tzOffsetMin
-      });
-      todayTasks = result.today || [];
-      tomorrowTasks = result.tomorrow || [];
-      nextChangeTs = result.next_change_ts || currentNow + 1800; // Rust uses snake_case
-      console.log('[TaskCalendar] Tasks loaded:', { today: todayTasks.length, tomorrow: tomorrowTasks.length });
+      tasks = await call('task_list');
     } catch (e) {
-      console.error('[TaskCalendar] Failed to load tasks:', e);
-      todayTasks = [];
-      tomorrowTasks = [];
-      nextChangeTs = Math.floor(Date.now() / 1000) + 1800;
+      console.error('Failed to load tasks:', e);
+      toast.error(e);
     }
   }
 
-  // Refresh all data
   async function refresh() {
-    console.log('[TaskCalendar] Refreshing all data');
-    try {
-      await Promise.all([loadEventDays(), loadEvents(), loadTasks()]);
-      console.log('[TaskCalendar] Refresh complete');
-    } catch (e) {
-      console.error('[TaskCalendar] Refresh error:', e);
-      // Set fallback data so component still renders
-      eventDays = [];
-      events = [];
-      todayTasks = [];
-      tomorrowTasks = [];
-    }
+    await Promise.all([loadEvents(), loadEventDays(), loadTasks()]);
   }
 
-  // Schedule next refresh at next_change_ts
-  function scheduleRefresh() {
-    if (refreshTimer) clearTimeout(refreshTimer);
-    const currentNow = Math.floor(Date.now() / 1000);
-    const delay = Math.max(1000, (nextChangeTs - currentNow) * 1000);
-    refreshTimer = setTimeout(() => {
-      refresh();
-      scheduleRefresh();
-    }, delay);
+  // Event handlers
+  function selectDay(date) {
+    selectedDate = date;
+    refresh();
   }
 
-  // Refresh on mount only
-  $effect(() => {
-    console.log('[TaskCalendar] $effect running, calling refresh');
-    try {
-      refresh();
-      scheduleRefresh();
-    } catch (e) {
-      console.error('[TaskCalendar] Error in $effect:', e);
-    }
-    return () => {
-      console.log('[TaskCalendar] Cleanup');
-      if (refreshTimer) clearTimeout(refreshTimer);
-    };
-  });
+  function prevWeek() {
+    weekOffset -= 1;
+  }
 
-  // Handle window visibility changes
-  $effect(() => {
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        refresh();
-        scheduleRefresh();
-      } else {
-        if (refreshTimer) clearTimeout(refreshTimer);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
-  });
+  function nextWeek() {
+    weekOffset += 1;
+  }
 
-  // Navigate months
   function prevMonth() {
-    const date = new Date(currentYear, currentMonth - 2, 1);
-    selectedDate = date.toISOString().split('T')[0];
+    const date = new Date(selectedDateObj);
+    date.setMonth(date.getMonth() - 1);
+    selectedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    refresh();
   }
 
   function nextMonth() {
-    const date = new Date(currentYear, currentMonth, 1);
-    selectedDate = date.toISOString().split('T')[0];
+    const date = new Date(selectedDateObj);
+    date.setMonth(date.getMonth() + 1);
+    selectedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    refresh();
   }
 
   function goToday() {
     selectedDate = todayStr;
+    calendarExpanded = false;
+    refresh();
   }
 
-  // Select a day
-  function selectDay(dateStr) {
-    selectedDate = dateStr;
-  }
-
-  // Format time as HH:MM
-  function formatTime(ts) {
-    if (!ts) return '';
-    const d = new Date(ts * 1000);
-    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-  }
-
-  // Parse date string and time string to unix timestamp
-  function parseDateTime(dateStr, timeStr) {
-    if (!dateStr) return null;
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    if (timeStr) {
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      date.setHours(hours, minutes, 0, 0);
-    }
-    return Math.floor(date.getTime() / 1000);
-  }
-
-  // Open event form with selected date prefilled
-  function openEventForm() {
-    editingEvent = { title: '', date: selectedDate, start: '', end: '', remindMin: 10, color: COLOR_SWATCHES[0] };
-    showEventForm = true;
-  }
-
-  // Event actions
-  async function addEvent() {
-    try {
-      const start = parseDateTime(editingEvent.date, editingEvent.start);
-      const end = editingEvent.end ? parseDateTime(editingEvent.date, editingEvent.end) : null;
-      await call('event_add', {
-        title: editingEvent.title,
-        date: editingEvent.date,
-        start: editingEvent.start,
-        end: editingEvent.end,
-        remindMin: editingEvent.remindMin,
-        color: editingEvent.color
-      });
-      showEventForm = false;
-      editingEvent = null;
-      await refresh();
-      toast('Event added');
-    } catch (e) {
-      console.error('Failed to add event:', e);
-      toast(e.message || 'Failed to add event');
-    }
-  }
-
-  async function updateEvent() {
-    try {
-      await call('event_update', {
-        id: editingEvent.id,
-        title: editingEvent.title,
-        date: editingEvent.date,
-        start: editingEvent.start,
-        end: editingEvent.end,
-        remindMin: editingEvent.remindMin,
-        color: editingEvent.color
-      });
-      editingEvent = null;
-      showEventForm = false;
-      await refresh();
-      toast('Event updated');
-    } catch (e) {
-      console.error('Failed to update event:', e);
-      toast(e.message || 'Failed to update event');
-    }
-  }
-
-  async function deleteEvent(event) {
-    const original = { ...event };
-    try {
-      await call('event_delete', { id: event.id });
-      undoStack.push({ type: 'event', original });
-      setTimeout(() => { undoStack = undoStack.filter(u => u !== undoStack[undoStack.length - 1]); }, 5000);
-      await refresh();
-      toast('Event deleted (Undo available for 5s)');
-    } catch (e) {
-      console.error('Failed to delete event:', e);
-      toast(e.message || 'Failed to delete event');
-    }
-  }
-
-  function undo() {
-    const last = undoStack[undoStack.length - 1];
-    if (!last) return;
-    
-    if (last.type === 'event') {
-      restoreEvent(last.original);
-    } else if (last.type === 'task') {
-      restoreTask(last.original);
-    }
-    undoStack = undoStack.slice(0, -1);
-  }
-
-  async function restoreEvent(original) {
-    try {
-      await call('event_add', {
-        title: original.title,
-        date: new Date(original.start * 1000).toISOString().split('T')[0],
-        start: new Date(original.start * 1000).toTimeString().split(' ')[0].slice(0, 5),
-        end: original.end ? new Date(original.end * 1000).toTimeString().split(' ')[0].slice(0, 5) : null,
-        remindMin: original.remind_min,
-        color: original.color
-      });
-      await refresh();
-      toast('Event restored');
-    } catch (e) {
-      console.error('Failed to restore event:', e);
-      toast('Failed to restore event');
-    }
-  }
-
-  async function restoreTask(original) {
-    try {
-      await call('task_add_full', {
-        title: original.title,
-        day: original.day,
-        due: original.due,
-        remindMin: original.remind_min
-      });
-      await refresh();
-      toast('Task restored');
-    } catch (e) {
-      console.error('Failed to restore task:', e);
-      toast('Failed to restore task');
-    }
-  }
-
-  // Task actions
-  async function addTask(title, dueTimeStr, remindMin) {
-    try {
+  function openEventPopup(event = null) {
+    editingEvent = event;
+    showEventPopup = true;
+    if (event) {
+      eventTitle = event.title;
+      eventDate = selectedDate;
+      const date = new Date(event.start * 1000);
+      let hours = date.getHours();
+      const minutes = date.getMinutes();
+      eventAmPm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12;
+      hours = hours || 12;
+      eventHour = hours;
+      eventMinute = String(minutes).padStart(2, '0');
+      eventRemindMin = event.remind_min;
+    } else {
+      eventTitle = '';
+      eventDate = selectedDate;
+      // Default to next full hour
       const now = new Date();
-      const day = taskHorizon === 'today' ? todayStr : new Date(now.getTime() + 86400000).toISOString().split('T')[0];
+      let nextHour = now.getHours() + 1;
+      eventAmPm = nextHour >= 12 ? 'PM' : 'AM';
+      nextHour = nextHour % 12;
+      nextHour = nextHour || 12;
+      eventHour = nextHour;
+      eventMinute = '00';
+      eventRemindMin = 10;
+    }
+  }
+
+  function closeEventPopup() {
+    showEventPopup = false;
+    editingEvent = null;
+  }
+
+  async function saveEvent() {
+    if (!eventTitle.trim()) {
+      toast.error('Event title is required');
+      return;
+    }
+    
+    try {
+      const minutes = to12hTo24h(eventHour, eventMinute, eventAmPm === 'PM');
+      const [year, month, day] = eventDate.split('-').map(Number);
+      const eventDateObj = new Date(year, month - 1, day);
+      eventDateObj.setHours(Math.floor(minutes / 60));
+      eventDateObj.setMinutes(minutes % 60);
+      eventDateObj.setSeconds(0);
+      const startTimestamp = Math.floor(eventDateObj.getTime() / 1000);
       
-      let due = null;
-      if (dueTimeStr) {
-        const [hours, minutes] = dueTimeStr.split(':').map(Number);
-        const dueDate = taskHorizon === 'today' ? now : new Date(now.getTime() + 86400000);
-        dueDate.setHours(hours, minutes, 0, 0);
-        due = Math.floor(dueDate.getTime() / 1000);
+      if (editingEvent) {
+        await call('event_update', {
+          id: editingEvent.id,
+          title: eventTitle,
+          start: startTimestamp,
+          end: null,
+          remindMin: eventRemindMin,
+          color: null
+        });
+      } else {
+        await call('event_add', {
+          title: eventTitle,
+          start: startTimestamp,
+          end: null,
+          remindMin: eventRemindMin,
+          color: null
+        });
       }
       
-      await call('task_add_full', {
-        title,
-        day,
-        due,
-        remindMin: remindMin || 15
-      });
-      await refresh();
-      toast('Task added');
+      closeEventPopup();
+      refresh();
+    } catch (e) {
+      console.error('Failed to save event:', e);
+      toast.error(e);
+    }
+  }
+
+  async function deleteEvent(id) {
+    try {
+      await call('event_delete', { id });
+      refresh();
+    } catch (e) {
+      console.error('Failed to delete event:', e);
+      toast.error(e);
+    }
+  }
+
+  async function addTask() {
+    const title = newTaskInput.value.trim();
+    if (!title) return;
+    
+    try {
+      await call('task_add', { title });
+      newTaskInput.value = '';
+      newTaskInput.focus();
+      loadTasks();
     } catch (e) {
       console.error('Failed to add task:', e);
-      toast(e.message || 'Failed to add task');
+      toast.error(e);
     }
   }
 
-  async function toggleTask(task) {
+  async function toggleTask(id) {
     try {
-      const currentNow = Math.floor(Date.now() / 1000);
-      await call('task_toggle', { id: task.id, nowTs: currentNow });
-      await refresh();
+      await call('task_toggle', { id });
+      loadTasks();
     } catch (e) {
       console.error('Failed to toggle task:', e);
-      toast(e.message || 'Failed to toggle task');
+      toast.error(e);
     }
   }
 
-  async function deleteTask(task) {
-    const original = { ...task };
+  async function deleteTask(id) {
     try {
-      await call('task_delete', { id: task.id });
-      undoStack.push({ type: 'task', original });
-      setTimeout(() => { undoStack = undoStack.filter(u => u !== undoStack[undoStack.length - 1]); }, 5000);
-      await refresh();
-      toast('Task deleted (Undo available for 5s)');
+      await call('task_delete', { id });
+      loadTasks();
     } catch (e) {
       console.error('Failed to delete task:', e);
-      toast(e.message || 'Failed to delete task');
+      toast.error(e);
     }
   }
 
-  function handleKeyDown(e) {
-    if (e.key === 'Escape') {
-      showEventForm = false;
-      editingEvent = null;
-      editingTask = null;
-    } else if (e.key === ' ' && editingTask && !editingTask.done) {
-      e.preventDefault();
-      toggleTask(editingTask);
+  async function clearCompleted() {
+    try {
+      const count = await call('task_clear_done');
+      loadTasks();
+      toast.success(`Cleared ${count} completed tasks`);
+    } catch (e) {
+      console.error('Failed to clear completed:', e);
+      toast.error(e);
     }
   }
+
+  // Reminder chip options
+  const reminderOptions = [
+    { label: 'Off', value: 0 },
+    { label: '5 min', value: 5 },
+    { label: '10 min', value: 10 },
+    { label: '15 min', value: 15 },
+    { label: '30 min', value: 30 },
+    { label: '1 hr', value: 60 }
+  ];
+
+  // Derived: sorted tasks (done at bottom)
+  let sortedTasks = $derived.by(() => {
+    return [...tasks].sort((a, b) => a.done - b.done || b.id - a.id);
+  });
+
+  // Derived: has any done tasks
+  let hasDoneTasks = $derived(tasks.some(t => t.done));
+
+  // On mount
+  onMount(() => {
+    refresh();
+    
+    // Visibility/focus handler
+    const handleVisibilityChange = () => refresh();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  });
+
+  // Test helper for to12hTo24h
+  function testTo12hTo24h() {
+    console.assert(to12hTo24h(12, '00', false) === 0, '12:00 AM should be 0');
+    console.assert(to12hTo24h(12, '30', false) === 30, '12:30 AM should be 30');
+    console.assert(to12hTo24h(12, '00', true) === 720, '12:00 PM should be 720');
+    console.assert(to12hTo24h(1, '00', true) === 780, '1:00 PM should be 780');
+    console.assert(to12hTo24h(11, '59', true) === 1439, '11:59 PM should be 1439');
+  }
+  testTo12hTo24h();
 </script>
 
-<svelte:window onkeydown={handleKeyDown} />
-
-<div class="task-calendar">
-  <!-- Left: Month Grid -->
-  <div class="calendar-section">
+<svelte:boundary>
+  <div class="task-calendar" class:calendar-expanded={calendarExpanded}>
+    <!-- Calendar Header (always visible) -->
     <div class="calendar-header">
-      <button class="icon-btn" onclick={prevMonth} aria-label="Previous month">
-        <Icon name="chevron-left" size={16} />
-      </button>
       <span class="month-name">
-        {selectedDateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+        {selectedDateObj.toLocaleDateString('en-US', { month: 'short' })}
       </span>
-      <button class="icon-btn" onclick={nextMonth} aria-label="Next month">
-        <Icon name="chevron-right" size={16} />
-      </button>
-    </div>
-    {#if !isToday}
-      <button class="today-btn" onclick={goToday}>Today</button>
-    {/if}
-    <div class="calendar-grid">
-      <div class="day-header">Sun</div>
-      <div class="day-header">Mon</div>
-      <div class="day-header">Tue</div>
-      <div class="day-header">Wed</div>
-      <div class="day-header">Thu</div>
-      <div class="day-header">Fri</div>
-      <div class="day-header">Sat</div>
-      {#each calendarDays as day (day?.date)}
-        {@const isSelected = day?.date === selectedDate}
-        <button
-          class="calendar-day"
-          class:selected={isSelected}
-          class:today={day?.isToday}
-          class:has-event={day?.hasEvent}
-          class:padding={day === null}
-          onclick={() => day && selectDay(day.date)}
-          disabled={day === null}
-          aria-label={day ? `Select ${day.isToday ? 'today, ' : ''}${day.date}` : ''}
-        >
-          {day?.day}
-          {#if day?.hasEvent}
-            <div class="event-dot"></div>
-          {/if}
+      <div class="header-right">
+        <button class="event-btn" onclick={() => openEventPopup()}>
+          <Icon name="plus" size={12} />
+          Event
         </button>
-      {/each}
+        <button 
+          class="expand-btn" 
+          onclick={() => calendarExpanded = !calendarExpanded}
+          aria-expanded={calendarExpanded}
+          aria-label={calendarExpanded ? 'Collapse calendar' : 'Expand calendar'}
+        >
+          <Icon name={calendarExpanded ? 'chevron-up' : 'chevron-down'} size={14} />
+        </button>
+        {#if !isToday}
+          <button class="today-btn" onclick={goToday}>Today</button>
+        {/if}
+      </div>
     </div>
-  </div>
 
-  <!-- Right: Events and Tasks -->
-  <div class="content-section">
-    <!-- Events Section -->
-    <div class="events-section">
-      <div class="section-header">
-        <span class="section-title">Events - {isToday ? 'Today' : selectedDate}</span>
-        <button class="icon-btn add-btn" onclick={openEventForm} aria-label="Add event">
-          <Icon name="plus" size={16} />
+    <!-- Week Strip (collapsed) or Full Month (expanded) -->
+    {#if !calendarExpanded}
+      <div class="week-strip">
+        <button class="nav-btn" onclick={prevWeek} aria-label="Previous week">
+          <Icon name="chevron-left" size={14} />
+        </button>
+        {#each weekDays as day, i (day.date)}
+          <button 
+            class="day-cell"
+            class:today={day.isToday}
+            class:selected={day.date === selectedDate}
+            onclick={() => selectDay(day.date)}
+            aria-label={day.isToday ? 'Today' : day.date}
+          >
+            <span class="weekday">{weekdayLetters[i]}</span>
+            <span class="day-number">{day.day}</span>
+            {#if day.hasEvent}
+              <div class="event-dot"></div>
+            {/if}
+          </button>
+        {/each}
+        <button class="nav-btn" onclick={nextWeek} aria-label="Next week">
+          <Icon name="chevron-right" size={14} />
         </button>
       </div>
-      
-      {#if showEventForm}
-        <div class="inline-form">
+    {:else}
+      <div class="expanded-layout">
+        <!-- Calendar on left -->
+        <div class="calendar-left">
+          <div class="month-header">
+            <button class="nav-btn" onclick={prevMonth} aria-label="Previous month">
+              <Icon name="chevron-left" size={14} />
+            </button>
+            <span class="month-name-full">
+              {selectedDateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </span>
+            <button class="nav-btn" onclick={nextMonth} aria-label="Next month">
+              <Icon name="chevron-right" size={14} />
+            </button>
+          </div>
+          <div class="weekday-row">
+            {#each weekdayLetters as letter}
+              <span class="weekday-header">{letter}</span>
+            {/each}
+          </div>
+          <div class="calendar-days">
+            {#each calendarDays as day, i (day?.date || i)}
+              {#if day}
+                <button 
+                  class="calendar-day"
+                  class:today={day.isToday}
+                  class:selected={day.date === selectedDate}
+                  onclick={() => selectDay(day.date)}
+                  aria-label={day.isToday ? 'Today' : day.date}
+                >
+                  {day.day}
+                  {#if day.hasEvent}
+                    <div class="event-dot"></div>
+                  {/if}
+                </button>
+              {:else}
+                <div class="calendar-day padding"></div>
+              {/if}
+            {/each}
+          </div>
+        </div>
+
+        <!-- Events and Tasks on right -->
+        <div class="events-section-right">
+          <!-- Events -->
+          {#if dayEvents.length === 0}
+            <div class="empty-state">
+              <Icon name="calendar" size={16} />
+              <span>{isToday ? 'Nothing for today' : `Nothing on ${selectedDate}`}</span>
+            </div>
+          {:else}
+            {#each dayEvents as event (event.id)}
+              <div 
+                class="event-row"
+                role="button"
+                tabindex="0"
+                onclick={() => openEventPopup(event)}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEventPopup(event); }}}
+                title={event.title}
+              >
+                <div class="event-color-bar" style="background: {EVENT_COLOR}"></div>
+                <span class="event-time">{formatTime24To12h(event.start)}</span>
+                <span class="event-title">{event.title}</span>
+                <button 
+                  class="delete-btn"
+                  onclick={(e) => { e.stopPropagation(); deleteEvent(event.id); }}
+                  aria-label="Delete"
+                  type="button"
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              </div>
+            {/each}
+          {/if}
+
+          <!-- Tasks -->
+          <div class="tasks-inline">
+            <div class="task-input-row">
+              <Icon name="plus" size={16} style="color: {TASK_COLOR}" />
+              <input 
+                type="text" 
+                class="task-input" 
+                placeholder="New task..." 
+                bind:this={newTaskInput}
+                onkeydown={(e) => { if (e.key === 'Enter') addTask(); }}
+              />
+              {#if hasDoneTasks}
+                <button class="clear-btn" onclick={clearCompleted}>Clear completed</button>
+              {/if}
+            </div>
+            
+            <div class="tasks-list">
+              {#if sortedTasks.length === 0}
+                <div class="empty-state">No tasks</div>
+              {:else}
+                {#each sortedTasks as task (task.id)}
+                  <div 
+                    class="task-row"
+                    class:done={task.done}
+                    title={task.title}
+                  >
+                    <input 
+                      type="checkbox" 
+                      class="task-checkbox"
+                      checked={task.done}
+                      onclick={() => toggleTask(task.id)}
+                    />
+                    <span class="task-title">{task.title}</span>
+                    <button 
+                      class="delete-btn"
+                      onclick={() => deleteTask(task.id)}
+                      aria-label="Delete"
+                    >
+                      <Icon name="close" size={12} />
+                    </button>
+                  </div>
+                {/each}
+              {/if}
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Events Section (collapsed view only) -->
+    {#if !calendarExpanded}
+      <div class="events-section">
+        {#if dayEvents.length === 0}
+          <div class="empty-state">
+            <Icon name="calendar" size={16} />
+            <span>{isToday ? 'Nothing for today' : `Nothing on ${selectedDate}`}</span>
+          </div>
+        {:else}
+          {#each dayEvents as event (event.id)}
+            <div 
+              class="event-row"
+              role="button"
+              tabindex="0"
+              onclick={() => openEventPopup(event)}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEventPopup(event); }}}
+              title={event.title}
+            >
+              <div class="event-color-bar" style="background: {EVENT_COLOR}"></div>
+              <span class="event-time">{formatTime24To12h(event.start)}</span>
+              <span class="event-title">{event.title}</span>
+              <button 
+                class="delete-btn"
+                onclick={(e) => { e.stopPropagation(); deleteEvent(event.id); }}
+                aria-label="Delete"
+                type="button"
+              >
+                <Icon name="close" size={12} />
+              </button>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Tasks Area (collapsed view only) -->
+    {#if !calendarExpanded}
+      <div class="tasks-area">
+        <div class="task-input-row">
+          <Icon name="plus" size={16} style="color: {TASK_COLOR}" />
           <input 
             type="text" 
-            placeholder="Event title" 
-            bind:value={$editingEvent.title} 
+            class="task-input" 
+            placeholder="New task..." 
+            bind:this={newTaskInput}
+            onkeydown={(e) => { if (e.key === 'Enter') addTask(); }}
           />
-          <div class="form-row">
-            <input 
-              type="date" 
-              bind:value={$editingEvent.date} 
-            />
-            <input 
-              type="time" 
-              placeholder="Start" 
-              bind:value={$editingEvent.start} 
-            />
-            <input 
-              type="time" 
-              placeholder="End" 
-              bind:value={$editingEvent.end} 
-            />
-          </div>
-          <div class="form-row">
+          {#if hasDoneTasks}
+            <button class="clear-btn" onclick={clearCompleted}>Clear completed</button>
+          {/if}
+        </div>
+        
+        <div class="tasks-list">
+          {#if sortedTasks.length === 0}
+            <div class="empty-state">No tasks</div>
+          {:else}
+            {#each sortedTasks as task (task.id)}
+              <div 
+                class="task-row"
+                class:done={task.done}
+                title={task.title}
+              >
+                <input 
+                  type="checkbox" 
+                  class="task-checkbox"
+                  checked={task.done}
+                  onclick={() => toggleTask(task.id)}
+                />
+                <span class="task-title">{task.title}</span>
+                <button 
+                  class="delete-btn"
+                  onclick={() => deleteTask(task.id)}
+                  aria-label="Delete"
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </div>
+    {/if}
+  </div>
+
+  <!-- Event Popup Modal -->
+  {#if showEventPopup}
+    <div 
+      class="modal-overlay" 
+      role="button" 
+      tabindex="-1" 
+      onclick={(e) => { if (e.target === e.currentTarget) closeEventPopup(); }}
+      onkeydown={(e) => { if (e.key === 'Escape') closeEventPopup(); }}
+    >
+      <div class="modal" role="dialog" tabindex="-1" inert={!showEventPopup}>
+        <div class="modal-header">
+          <span class="modal-title">{editingEvent ? 'Edit event' : 'New event'}</span>
+        </div>
+        <div class="modal-body">
+          <input 
+            type="text" 
+            class="modal-input" 
+            placeholder="Event title" 
+            bind:value={eventTitle} 
+            onkeydown={(e) => { if (e.key === 'Enter') saveEvent(); }}
+          />
+          <input 
+            type="date" 
+            class="modal-input" 
+            bind:value={eventDate} 
+          />
+          <div class="time-row">
             <input 
               type="number" 
-              placeholder="Reminder (min)" 
-              bind:value={$editingEvent.remindMin} 
-              min="0"
+              class="time-input" 
+              min="1" 
+              max="12" 
+              bind:value={eventHour} 
             />
-            <div class="color-swatches">
-              {#each COLOR_SWATCHES as color}
+            <span>:</span>
+            <input 
+              type="text" 
+              class="time-input" 
+              maxlength="2" 
+              bind:value={eventMinute} 
+            />
+            <div class="ampm-toggle">
+              <button 
+                class:active={eventAmPm === 'AM'} 
+                onclick={() => eventAmPm = 'AM'}
+              >AM</button>
+              <button 
+                class:active={eventAmPm === 'PM'} 
+                onclick={() => eventAmPm = 'PM'}
+              >PM</button>
+            </div>
+          </div>
+          <div class="reminder-section">
+            <span class="reminder-label">Remind me before</span>
+            <div class="reminder-chips">
+              {#each reminderOptions as opt}
                 <button 
-                  class="color-swatch" 
-                  style={`background: ${color}`}
-                  class:selected={$editingEvent.color === color}
-                  onclick={() => $editingEvent.color = color}
-                  aria-label={`Select color ${color}`}
-                ></button>
+                  class:active={eventRemindMin === opt.value}
+                  onclick={() => eventRemindMin = opt.value}
+                >
+                  {opt.label}
+                </button>
               {/each}
             </div>
           </div>
-          <div class="form-actions">
-            <button class="btn-secondary" onclick={() => { showEventForm = false; editingEvent = null; }}>Cancel</button>
-            <button class="btn-primary" onclick={() => $editingEvent?.id ? updateEvent() : addEvent()}>
-              {$editingEvent?.id ? 'Update' : 'Add'}
-            </button>
-          </div>
         </div>
-      {:else if events.length === 0}
-        <div class="empty-state">No events</div>
-      {:else}
-        <div class="events-list">
-          {#each events as event (event.id)}
-            <div 
-              class="event-row" 
-              class:in-progress={event.in_progress}
-              role="button"
-              tabindex="0"
-              onclick={() => {
-                const startDate = new Date(event.start * 1000);
-                const dateStr = startDate.toISOString().split('T')[0];
-                const startTime = startDate.toTimeString().split(' ')[0].slice(0, 5);
-                const endTime = event.end ? new Date(event.end * 1000).toTimeString().split(' ')[0].slice(0, 5) : '';
-                editingEvent = { 
-                  ...event, 
-                  date: dateStr, 
-                  start: startTime, 
-                  end: endTime 
-                };
-                showEventForm = true;
-              }}
-              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); } }}
-              aria-label={`Edit event: ${event.title}`}
-            >
-              <div class="event-time">
-                {formatTime(event.start)}
-                {#if event.end}
-                  <span class="time-sep">-</span>
-                  {formatTime(event.end)}
-                {/if}
-              </div>
-              <div class="event-content">
-                <div class="event-title">{event.title}</div>
-                {#if event.in_progress}
-                  <span class="now-tag">now</span>
-                {/if}
-              </div>
-              <div class="event-color" style={`background: ${event.color || 'var(--accent)'}`}></div>
-              <button class="delete-btn" onclick={(e) => { e.stopPropagation(); deleteEvent(event); }} aria-label="Delete">
-                <Icon name="x" size={12} />
-              </button>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
-
-    <!-- Tasks Section -->
-    <div class="tasks-section">
-      <div class="section-header">
-        <div class="task-pills">
-          <button 
-            class="task-pill" 
-            class:active={taskHorizon === 'today'}
-            onclick={() => taskHorizon = 'today'}
-          >
-            Today
-          </button>
-          <button 
-            class="task-pill" 
-            class:active={taskHorizon === 'tomorrow'}
-            onclick={() => taskHorizon = 'tomorrow'}
-          >
-            Tomorrow
-          </button>
-        </div>
-      </div>
-      
-      {#if taskHorizon === 'today' && todayTasks.length === 0}
-        <div class="empty-state">Nothing to do</div>
-      {:else if taskHorizon === 'tomorrow' && tomorrowTasks.length === 0}
-        <div class="empty-state">Nothing to do</div>
-      {:else}
-        <div class="tasks-list">
-          {#each (taskHorizon === 'today' ? todayTasks : tomorrowTasks) as task (task.id)}
-            <div 
-              class="task-row" 
-              class:done={task.done}
-              class:overdue={task.overdue}
-              role="button"
-              tabindex="0"
-              onclick={() => editingTask = { ...task }}
-              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); } }}
-              aria-label={`Edit task: ${task.title}`}
-            >
-              <input 
-                type="checkbox" 
-                checked={task.done}
-                onclick={(e) => { e.stopPropagation(); toggleTask(task); }}
-                aria-label="Toggle task"
-              />
-              <div class="task-content">
-                <div class="task-title {task.done ? 'struck' : ''}">{task.title}</div>
-                {#if task.due}
-                  <div class="task-due">{formatTime(task.due)}</div>
-                {/if}
-                {#if task.overdue}
-                  <span class="overdue-tag">overdue</span>
-                {/if}
-                {#if task.done}
-                  <span class="done-tag">done</span>
-                {/if}
-              </div>
-              <button class="delete-btn" onclick={(e) => { e.stopPropagation(); deleteTask(task); }} aria-label="Delete">
-                <Icon name="x" size={12} />
-              </button>
-            </div>
-          {/each}
-        </div>
-      {/if}
-      
-      <!-- Add Task Input -->
-      <div class="add-task-row">
-        <input 
-          type="text" 
-          placeholder="Add task (e.g., '17:30 Submit report' for due time)" 
-          bind:value={$newTaskInput}
-          onkeydown={(e) => {
-            if (e.key === 'Enter') {
-              const text = $newTaskInput.trim();
-              if (text) {
-                const match = text.match(/(\d{1,2}):(\d{2})\s+(.+)/);
-                if (match) {
-                  const [, hours, minutes, title] = match;
-                  addTask(title, `${hours}:${minutes}`, 15);
-                } else {
-                  addTask(text, null, 15);
-                }
-                $newTaskInput = '';
-              }
-            }
-          }}
-        />
-        <div class="reminder-chip">
-          <Icon name="bell" size={12} />
-          <span>15m</span>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick={closeEventPopup}>Cancel</button>
+          <button class="btn-primary" onclick={saveEvent}>{editingEvent ? 'Save' : 'Add'}</button>
         </div>
       </div>
     </div>
-  </div>
-</div>
-
-{#if undoStack.length > 0}
-  <div class="undo-toast">
-    <button onclick={undo}>Undo</button>
-  </div>
-{/if}
+  {/if}
+</svelte:boundary>
 
 <style>
   .task-calendar {
-    display: flex;
-    height: 100%;
-    gap: 16px;
-    padding: 12px;
-    font-size: 13px;
-  }
-
-  .calendar-section {
-    width: 190px;
+    --agenda-event: var(--accent);
+    --agenda-task: hsl(175 50% 55%);
+    
     display: flex;
     flex-direction: column;
-    border-right: 1px solid var(--row-hi);
-    padding-right: 16px;
+    height: 100%;
+    overflow: hidden;
+    padding: 0 12px;
+    gap: 6px;
+    position: relative;
   }
 
+  /* Calendar Header */
   .calendar-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
+    height: 30px;
+    flex: 0 0 auto;
+    z-index: 10;
   }
 
   .month-name {
-    font-weight: 500;
-    font-size: 14px;
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .event-btn {
+    height: 24px;
+    padding: 0 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--agenda-event);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--agenda-event);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s;
+  }
+
+  .event-btn:hover {
+    background: rgba(157, 180, 255, 0.12);
+  }
+
+  .expand-btn {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .expand-btn:hover {
+    background: var(--row-hi);
+    color: var(--ink);
   }
 
   .today-btn {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--accent);
     background: none;
     border: none;
     cursor: pointer;
-    padding: 4px 0;
-    margin-bottom: 8px;
+    padding: 4px 8px;
+    border-radius: 4px;
   }
 
   .today-btn:hover {
-    text-decoration: underline;
+    background: var(--row-hi);
   }
 
-  .calendar-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
+  /* Week Strip */
+  .week-strip {
+    display: flex;
+    align-items: center;
     gap: 4px;
-    flex: 1;
+    height: 46px;
+    flex: 0 0 auto;
   }
 
-  .day-header {
+  .nav-btn {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+
+  .nav-btn:hover {
+    background: var(--row-hi);
+    color: var(--ink);
+  }
+
+  .day-cell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    position: relative;
+    min-width: 0;
+  }
+
+  .day-cell:hover {
+    background: var(--row-hi);
+  }
+
+  .weekday {
+    font-size: 9px;
+    color: var(--dim);
+    margin-bottom: 2px;
+  }
+
+  .day-number {
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .day-cell.today .day-number {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #0a0a0a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .day-cell.selected .day-number {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: 1px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .event-dot {
+    position: absolute;
+    bottom: 2px;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--agenda-event);
+  }
+
+  .day-cell.today .event-dot {
+    background: #0a0a0a;
+  }
+
+  /* Expanded Layout */
+  .expanded-layout {
+    display: flex;
+    gap: 12px;
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
+  .calendar-left {
+    flex: 0 0 45%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    height: 100%;
+  }
+
+  .calendar-left .month-header {
+    display: flex;
+    align-items: center;
+    height: 32px;
+    gap: 4px;
+  }
+
+  .calendar-left .month-name-full {
+    font-weight: 500;
+    font-size: 14px;
+    flex: 1;
+    text-align: center;
+  }
+
+  .calendar-left .weekday-row {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .calendar-left .weekday-header {
     font-size: 10px;
     color: var(--dim);
     text-align: center;
     font-weight: 500;
   }
 
-  .calendar-day {
-    aspect-ratio: 1;
+  .calendar-left .calendar-days {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .calendar-left .calendar-day {
+    width: 30px;
+    height: 30px;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    border-radius: 6px;
+    border-radius: 50%;
     cursor: pointer;
     font-size: 12px;
     position: relative;
@@ -755,159 +958,370 @@
     background: transparent;
     padding: 0;
     color: inherit;
+    margin: 0 auto;
   }
 
-  .calendar-day.padding {
+  .calendar-left .calendar-day.padding {
     visibility: hidden;
-    pointer-events: none;
   }
 
-  .calendar-day:hover {
+  .calendar-left .calendar-day:hover {
     background: var(--row-hi);
   }
 
-  .calendar-day.selected {
+  .calendar-left .calendar-day.today {
     background: var(--accent);
     color: #0a0a0a;
   }
 
-  .calendar-day.today {
+  .calendar-left .calendar-day.selected {
     border: 1px solid var(--accent);
   }
 
-  .calendar-day.has-event::after {
-    content: '';
+  .calendar-left .event-dot {
     position: absolute;
-    bottom: 4px;
-    width: 4px;
-    height: 4px;
+    bottom: 1px;
+    width: 3px;
+    height: 3px;
     border-radius: 50%;
-    background: var(--accent);
+    background: var(--agenda-event);
   }
 
-  .content-section {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-width: 0;
+  .calendar-left .calendar-day.today .event-dot {
+    background: #0a0a0a;
   }
 
-  .events-section,
-  .tasks-section {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .section-header {
+  .calendar-left .nav-btn {
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--dim);
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-bottom: 8px;
+    justify-content: center;
   }
 
-  .section-title {
-    font-weight: 500;
-    font-size: 13px;
+  .calendar-left .nav-btn:hover {
+    background: var(--row-hi);
+    color: var(--ink);
   }
 
-  .task-pills {
+  .events-section-right {
+    flex: 1;
+    min-width: 0;
     display: flex;
-    gap: 6px;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
   }
 
-  .task-pill {
-    padding: 4px 12px;
+  .events-section-right::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .events-section-right::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 3px;
+  }
+
+  .tasks-inline {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .tasks-inline .task-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+
+  .tasks-inline .task-input {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
     background: var(--row);
-    border: 1px solid var(--row-hi);
-    border-radius: 999px;
-    font-size: 12px;
-    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    padding: 0 10px;
+    font-size: 13px;
+    color: var(--ink);
+  }
+
+  .tasks-inline .task-input::placeholder {
     color: var(--dim);
   }
 
-  .task-pill:hover {
-    background: var(--row-hi);
+  .tasks-inline .task-input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
-  .task-pill.active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #0a0a0a;
+  .tasks-inline .clear-btn {
+    font-size: 11px;
+    color: var(--dim);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    white-space: nowrap;
   }
 
-  .events-list,
-  .tasks-list {
+  .tasks-inline .clear-btn:hover {
+    color: var(--ink);
+  }
+
+  .tasks-inline .tasks-list {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 4px;
   }
 
-  .event-row {
+  .tasks-inline .tasks-list::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .tasks-inline .tasks-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 3px;
+  }
+
+  .tasks-inline .task-row {
+    height: 28px;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px;
+    padding: 0 6px;
+    border-radius: 4px;
     background: var(--row);
-    border-radius: 8px;
+  }
+
+  .tasks-inline .task-row:hover {
+    background: var(--row-hi);
+  }
+
+  .tasks-inline .task-row.done .task-title {
+    text-decoration: line-through;
+    opacity: 0.5;
+  }
+
+  .tasks-inline .task-checkbox {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
     cursor: pointer;
-    position: relative;
+    accent-color: var(--agenda-task);
+  }
+
+  .tasks-inline .task-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tasks-inline .delete-btn {
+    opacity: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    color: var(--dim);
+    border: none;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .tasks-inline .task-row:hover .delete-btn {
+    opacity: 1;
+  }
+
+  .tasks-inline .delete-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--ink);
+  }
+
+  /* Events Section (normal view) */
+  .events-section {
+    flex: 0 0 auto;
+    max-height: 80px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-height: 0;
+  }
+
+  .events-section::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .events-section::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 3px;
+  }
+
+  /* Hide events-section and tasks-area in expanded view */
+  .task-calendar.calendar-expanded > .events-section,
+  .task-calendar.calendar-expanded > .tasks-area {
+    display: none;
+  }
+
+  .event-row {
+    height: 24px;
+    display: grid;
+    grid-template-columns: 3px 50px minmax(0, 1fr) 20px;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--row);
+    cursor: pointer;
   }
 
   .event-row:hover {
     background: var(--row-hi);
   }
 
-  .event-row.in-progress {
-    border-left: 2px solid var(--accent);
+  .event-row:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  .event-color-bar {
+    width: 3px;
+    height: 100%;
+    border-radius: 1px;
   }
 
   .event-time {
     font-size: 11px;
     color: var(--dim);
-    min-width: 70px;
-  }
-
-  .time-sep {
-    margin: 0 4px;
-    color: var(--dim);
-  }
-
-  .event-content {
-    flex: 1;
-    min-width: 0;
+    font-variant-numeric: tabular-nums;
   }
 
   .event-title {
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .now-tag {
-    font-size: 10px;
-    background: var(--accent);
-    color: #0a0a0a;
-    padding: 2px 6px;
+  .delete-btn {
+    opacity: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 4px;
-    margin-left: 6px;
+    color: var(--dim);
+    border: none;
+    background: transparent;
+    cursor: pointer;
   }
 
-  .event-color {
-    width: 4px;
-    height: 16px;
-    border-radius: 2px;
+  .event-row:hover .delete-btn {
+    opacity: 1;
   }
 
-  .task-row {
+  .delete-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--ink);
+  }
+
+  /* Tasks Area (collapsed view only) */
+  .tasks-area {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .task-input-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px;
+    flex: 0 0 auto;
+  }
+
+  .task-input {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
     background: var(--row);
-    border-radius: 8px;
+    border: none;
+    border-radius: 6px;
+    padding: 0 10px;
+    font-size: 13px;
+    color: var(--ink);
+  }
+
+  .task-input:focus {
+    outline: none;
+    background: var(--row-hi);
+  }
+
+  .task-input::placeholder {
+    color: var(--dim);
+  }
+
+  .clear-btn {
+    font-size: 11px;
+    color: var(--dim);
+    background: none;
+    border: none;
     cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+
+  .clear-btn:hover {
+    background: var(--row-hi);
+    color: var(--ink);
+  }
+
+  .tasks-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .tasks-list::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .tasks-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 3px;
+  }
+
+  .task-row {
+    height: 28px;
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) 20px;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px;
+    border-radius: 4px;
+    background: var(--row);
   }
 
   .task-row:hover {
@@ -916,219 +1330,197 @@
 
   .task-row.done .task-title {
     text-decoration: line-through;
-    color: var(--dim);
-  }
-
-  .task-row.done {
     opacity: 0.6;
   }
 
-  .task-content {
-    flex: 1;
-    min-width: 0;
+  .task-checkbox {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    cursor: pointer;
   }
 
   .task-title {
     font-size: 13px;
-    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .task-due {
-    font-size: 11px;
-    color: var(--dim);
-  }
-
-  .overdue-tag {
-    font-size: 10px;
-    background: rgba(255, 138, 128, 0.15);
-    color: #ff8a80;
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-left: 6px;
-  }
-
-  .done-tag {
-    font-size: 10px;
-    color: var(--dim);
-    margin-left: 6px;
-  }
-
-  .delete-btn {
-    width: 20px;
-    height: 20px;
-    border: none;
-    background: transparent;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    color: var(--dim);
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-
-  .event-row:hover .delete-btn,
   .task-row:hover .delete-btn {
     opacity: 1;
   }
 
-  .delete-btn:hover {
-    color: #ff8a80;
-    background: rgba(255, 138, 128, 0.1);
+  /* Empty State */
+  .empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--dim);
+    font-size: 12px;
+    padding: 12px;
   }
 
-  .inline-form {
+  /* Modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal {
+    background: #14161d;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    width: 300px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+
+  .modal-header {
+    padding: 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .modal-title {
+    font-weight: 500;
+    font-size: 14px;
+  }
+
+  .modal-body {
+    padding: 14px;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 12px;
+  }
+
+  .modal-input {
     background: var(--row);
-    border-radius: 8px;
-  }
-
-  .inline-form input {
-    padding: 6px 8px;
-    border: 1px solid var(--row-hi);
-    border-radius: 4px;
-    background: var(--bg);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
     color: var(--ink);
-    font-size: 12px;
   }
 
-  .form-row {
+  .modal-input:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+
+  .time-row {
     display: flex;
-    gap: 8px;
+    align-items: center;
+    gap: 4px;
   }
 
-  .form-row input {
+  .time-input {
+    width: 50px;
+    background: var(--row);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 13px;
+    color: var(--ink);
+    text-align: center;
+  }
+
+  .ampm-toggle {
+    display: flex;
+    gap: 2px;
+  }
+
+  .ampm-toggle button {
     flex: 1;
+    height: 32px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    background: var(--row);
+    color: var(--ink);
+    font-size: 11px;
+    cursor: pointer;
   }
 
-  .color-swatches {
+  .ampm-toggle button.active {
+    background: var(--accent);
+    color: #0a0a0a;
+    border-color: var(--accent);
+  }
+
+  .reminder-section {
     display: flex;
+    flex-direction: column;
     gap: 6px;
   }
 
-  .color-swatch {
-    width: 20px;
-    height: 20px;
+  .reminder-label {
+    font-size: 12px;
+    color: var(--dim);
+  }
+
+  .reminder-chips {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .reminder-chips button {
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 4px;
+    background: var(--row);
+    color: var(--ink);
+    font-size: 11px;
     cursor: pointer;
-    border: 2px solid transparent;
-    padding: 0;
   }
 
-  .color-swatch.selected {
-    border-color: var(--ink);
+  .reminder-chips button.active {
+    background: var(--accent);
+    color: #0a0a0a;
+    border-color: var(--accent);
   }
 
-  .form-actions {
+  .modal-footer {
+    padding: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
     display: flex;
     gap: 8px;
     justify-content: flex-end;
   }
 
-  .btn-primary,
-  .btn-secondary {
-    padding: 6px 12px;
-    border-radius: 4px;
+  .btn-secondary,
+  .btn-primary {
+    height: 28px;
+    padding: 0 16px;
+    border-radius: 6px;
     font-size: 12px;
     cursor: pointer;
+  }
+
+  .btn-secondary {
+    background: var(--row);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--ink);
+  }
+
+  .btn-secondary:hover {
+    background: var(--row-hi);
   }
 
   .btn-primary {
     background: var(--accent);
-    color: #0a0a0a;
-    border: none;
-  }
-
-  .btn-secondary {
-    background: var(--row-hi);
-    color: var(--ink);
-    border: none;
-  }
-
-  .empty-state {
-    text-align: center;
-    color: var(--dim);
-    padding: 24px 16px;
-    font-size: 12px;
-  }
-
-  .add-task-row {
-    display: flex;
-    gap: 8px;
-    padding-top: 8px;
-    border-top: 1px solid var(--row-hi);
-  }
-
-  .add-task-row input {
-    flex: 1;
-    padding: 6px 8px;
-    border: 1px solid var(--row-hi);
-    border-radius: 4px;
-    background: var(--bg);
-    color: var(--ink);
-    font-size: 12px;
-  }
-
-  .reminder-chip {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    background: var(--row-hi);
-    border-radius: 999px;
-    font-size: 11px;
-    color: var(--dim);
-  }
-
-  .icon-btn {
-    width: 24px;
-    height: 24px;
-    border: none;
-    background: transparent;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    color: var(--dim);
-  }
-
-  .icon-btn:hover {
-    background: var(--row-hi);
-    color: var(--ink);
-  }
-
-  .add-btn {
-    background: var(--accent);
+    border: 1px solid var(--accent);
     color: #0a0a0a;
   }
 
-  .add-btn:hover {
+  .btn-primary:hover {
     opacity: 0.9;
-  }
-
-  .undo-toast {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: var(--row);
-    border: 1px solid var(--row-hi);
-    border-radius: 8px;
-    padding: 8px 12px;
-    z-index: 1000;
-  }
-
-  .undo-toast button {
-    background: var(--accent);
-    color: #0a0a0a;
-    border: none;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    cursor: pointer;
   }
 </style>
