@@ -701,7 +701,17 @@ pub async fn open_native(app: String) -> Result<(), String> {
 /// Enumerate installed Windows applications from Start Menu
 #[tauri::command]
 pub fn enumerate_apps() -> Result<Vec<apps::AppShortcut>, String> {
-    apps::enumerate_apps()
+    use std::panic;
+    
+    let result = panic::catch_unwind(|| {
+        apps::enumerate_apps()
+    });
+    
+    match result {
+        Ok(Ok(apps)) => Ok(apps),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err("Panic during app enumeration".to_string()),
+    }
 }
 
 /// Get user's saved app shortcuts
@@ -779,23 +789,36 @@ pub fn app_shortcut_remove(app: AppHandle, db: State<Db>, id: i64) -> Result<(),
 #[tauri::command]
 pub async fn app_shortcut_launch(path: String) -> Result<(), String> {
     use std::process::Command;
-    // Handle shell items (Recycle Bin, Control Panel)
+    
+    // Handle shell items (shell::: for Recycle Bin, Control Panel, etc.)
     if path.starts_with("shell:::") {
         if cfg!(windows) {
             Command::new("explorer.exe")
                 .arg(&path)
                 .spawn()
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to launch {}: {}", path, e))?;
         }
-    } else {
-        // Use 'start' command to launch .lnk files or executables
+    }
+    // Handle shell:AppsFolder paths (Store apps via AUMID)
+    else if path.starts_with("shell:AppsFolder\\") {
+        if cfg!(windows) {
+            Command::new("explorer.exe")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("Failed to launch {}: {}", path, e))?;
+        }
+    }
+    // Use 'start' command to launch .lnk files or executables
+    else {
         if cfg!(windows) {
             Command::new("cmd")
                 .args(["/c", "start", "", &path])
                 .spawn()
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| format!("Failed to launch {}: {}", path, e))?;
         } else {
-            Command::new(&path).spawn().map_err(|e| e.to_string())?;
+            Command::new(&path)
+                .spawn()
+                .map_err(|e| format!("Failed to launch {}: {}", path, e))?;
         }
     }
     Ok(())

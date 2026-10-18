@@ -17,6 +17,7 @@
   let iconUrls = $state({});
   let failedIcons = $state(new Set());  // Track failed icon loads
   let failedAppIcons = $state(new Set());  // Track failed picker icon loads
+  let searchInputRef;
 
   // Check if app is already added
   function isAppAdded(app) {
@@ -43,10 +44,18 @@
       await loadIconUrls();
     }
   });
+  
+  // Focus search input when picker opens
+  $effect(() => {
+    if (showAppPicker && searchInputRef) {
+      searchInputRef.focus();
+    }
+  });
 
   async function loadAvailableApps() {
     try {
-      availableApps = await call('enumerate_apps');
+      const apps = await call('enumerate_apps');
+      availableApps = apps;
     } catch (e) {
       console.error('Failed to enumerate apps:', e);
       toast('Failed to load apps');
@@ -147,16 +156,18 @@
 
   // Calculate Levenshtein distance for typo tolerance
   function levenshteinDistance(a, b) {
+    const aChars = Array.from(a);
+    const bChars = Array.from(b);
     const matrix = [];
-    for (let i = 0; i <= b.length; i++) {
+    for (let i = 0; i <= bChars.length; i++) {
       matrix[i] = [i];
     }
-    for (let j = 0; j <= a.length; j++) {
+    for (let j = 0; j <= aChars.length; j++) {
       matrix[0][j] = j;
     }
-    for (let i = 1; i <= b.length; i++) {
-      for (let j = 1; j <= a.length; j++) {
-        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+    for (let i = 1; i <= bChars.length; i++) {
+      for (let j = 1; j <= aChars.length; j++) {
+        if (bChars[i - 1] === aChars[j - 1]) {
           matrix[i][j] = matrix[i - 1][j - 1];
         } else {
           matrix[i][j] = Math.min(
@@ -167,7 +178,7 @@
         }
       }
     }
-    return matrix[b.length][a.length];
+    return matrix[bChars.length][aChars.length];
   }
 
   // Search scoring with improved algorithm
@@ -192,25 +203,16 @@
       return 55;
     }
     
-    // Contains
+    // Contains (whole word or phrase)
     if (nameLower.includes(query)) return 40;
     
-    // Typo tolerance (Levenshtein distance)
+    // Typo tolerance (Levenshtein distance) - only for similar-length strings
     const distance = levenshteinDistance(nameLower, query);
     const maxLen = Math.max(nameLower.length, query.length);
     const similarity = 1 - (distance / maxLen);
-    if (similarity > 0.7) {
-      // Return score based on similarity (70-99% similarity = 25-35 points)
+    // Only allow typo tolerance if strings are similar length (within 2 characters)
+    if (Math.abs(nameLower.length - query.length) <= 2 && similarity > 0.7) {
       return Math.floor(similarity * 50);
-    }
-    
-    // Fuzzy subsequence match (fallback)
-    let queryIdx = 0;
-    for (const char of nameLower) {
-      if (char === query[queryIdx]) {
-        queryIdx++;
-        if (queryIdx === query.length) return 20;
-      }
     }
     
     return 0;
@@ -241,14 +243,64 @@
     failedAppIcons = new Set();  // Reset failed icons for fresh retry
   }
 
-  function highlightMatch(name, query) {
-    if (!query) return name;
+  function splitMatch(name, query) {
+    if (!query) return { before: name, match: '', after: '' };
+    
     const queryLower = query.toLowerCase();
     const nameLower = name.toLowerCase();
     const idx = nameLower.indexOf(queryLower);
-    if (idx === -1) return name;
-    return name.slice(0, idx) + '<mark>' + name.slice(idx, idx + query.length) + '</mark>' + name.slice(idx + query.length);
+    
+    if (idx === -1) return { before: name, match: '', after: '' };
+    
+    // Convert to character-safe indices
+    const nameChars = Array.from(name);
+    const queryChars = Array.from(query);
+    const nameLowerChars = Array.from(nameLower);
+    
+    // Find character index from byte index
+    let charIdx = 0;
+    let byteCount = 0;
+    for (let i = 0; i < nameLowerChars.length; i++) {
+      const charBytes = new Blob([nameLowerChars[i]]).size;
+      if (byteCount + charBytes > idx) break;
+      byteCount += charBytes;
+      charIdx = i;
+    }
+    
+    // Build parts
+    const before = nameChars.slice(0, charIdx).join('');
+    const match = nameChars.slice(charIdx, charIdx + queryChars.length).join('');
+    const after = nameChars.slice(charIdx + queryChars.length).join('');
+    
+    return { before, match, after };
   }
+  
+  // Inline tests for splitMatch
+  $effect(() => {
+    // Test empty query
+    const t1 = splitMatch("Camera", "");
+    console.assert(t1.before === "Camera" && t1.match === "" && t1.after === "", "Empty query test failed");
+    
+    // Test symbol names
+    const t2 = splitMatch("Microsoft® Word", "micro");
+    console.assert(t2.before === "" && t2.match === "Micro" && t2.after === "soft® Word", "Symbol name test failed");
+    
+    const t3 = splitMatch("Zoom™", "zoom");
+    console.assert(t3.before === "" && t3.match === "Zoom" && t3.after === "™", "Zoom test failed");
+    
+    // Test long name
+    const longName = "Very Long Application Name That Should Truncate At Sixty Characters Or More";
+    const t4 = splitMatch(longName, "long");
+    console.assert(t4.before === "Very " && t4.match === "Long" && t4.after === " Application Name That Should Truncate At Sixty Characters Or More", "Long name test failed");
+    
+    // Test middle match
+    const t5 = splitMatch("Camera", "ame");
+    console.assert(t5.before === "C" && t5.match === "ame" && t5.after === "ra", "Middle match test failed");
+    
+    // Test no match
+    const t6 = splitMatch("Camera", "xyz");
+    console.assert(t6.before === "Camera" && t6.match === "" && t6.after === "", "No match test failed");
+  });
 
   function getAppIconName(app) {
     const name = app.name.toLowerCase();
@@ -267,23 +319,19 @@
 
   async function loadAppIcon(app) {
     if (appIconUrls[app.path]) {
-      console.log(`[picker] Icon already cached for ${app.name}: ${app.path}`);
       return;
     }
     
     try {
       const icon = app.icon || app.path;
-      console.log(`[picker] Loading icon for ${app.name} from path: ${icon}`);
       const iconUrl = await call('extract_app_icon', { path: icon });
       if (iconUrl) {
-        console.log(`[picker] Successfully loaded icon for ${app.name}: ${iconUrl.substring(0, 50)}...`);
         appIconUrls[app.path] = iconUrl;
       } else {
-        console.warn(`[picker] No icon URL returned for ${app.name}`);
         failedAppIcons.add(app.path);
       }
     } catch (e) {
-      console.error(`[picker] Failed to load app icon for ${app.name}:`, e);
+      console.error(`Failed to load app icon for ${app.name}:`, e);
       failedAppIcons.add(app.path);
     }
   }
@@ -296,11 +344,8 @@
   $effect(() => {
     if (!showAppPicker) return;
     
-    console.log(`[picker] Effect triggered, showAppPicker=true, filteredApps.length=${filteredApps.length}`);
-    
     // Load icons for all filtered apps (or first 50 if many results)
     const appsToLoad = filteredApps.slice(0, 50);
-    console.log(`[picker] Loading icons for ${appsToLoad.length} apps`);
     for (const app of appsToLoad) {
       loadAppIcon(app);
     }
@@ -380,7 +425,7 @@
               type="text" 
               placeholder="Search apps..." 
               bind:value={searchQuery} 
-              use:autofocus
+              bind:this={searchInputRef}
             />
           </div>
           <button class="close-btn" onclick={() => showAppPicker = false}>
@@ -396,6 +441,7 @@
             </div>
           {:else}
             {#each filteredApps as app, index (app.path)}
+              {@const parts = splitMatch(app.name, searchQuery)}
               <button 
                 type="button"
                 class="app-item"
@@ -408,12 +454,14 @@
                     <img src={appIconUrls[app.path]} alt={app.name} onerror={() => handleAppIconError(app.path)} />
                   {:else}
                     <div class="app-icon-placeholder">
-                      <Icon name={getAppIconName(app)} size={20} />
+                      <span class="app-icon-letter">{Array.from(app.name)[0]?.toUpperCase() || '?'}</span>
                     </div>
                   {/if}
                 </div>
                 <div class="app-info">
-                  <div class="app-name" use:innerHTML={highlightMatch(app.name, searchQuery)}></div>
+                  <div class="app-name">
+                    {parts.before}{#if parts.match}<mark>{parts.match}</mark>{/if}{parts.after}
+                  </div>
                   {#if app.group || app.folder_group}
                     <div class="app-group">{app.group || app.folder_group}</div>
                   {/if}
@@ -544,7 +592,7 @@
   .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: transparent;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -664,13 +712,19 @@
     justify-content: center;
   }
 
+  .app-icon-letter {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
   .app-info {
     flex: 1;
     min-width: 0;
   }
 
   .app-name {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--ink);
     font-weight: 500;
     overflow: hidden;
