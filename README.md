@@ -18,7 +18,7 @@ reminders, one-tap modes, time-based routines and wallpaper rotation, in a pill 
 
 ### For Users (Download Installer)
 1. Download the latest NSIS installer from the [Releases](https://github.com/AmritBakshi2003/Isle/releases) page
-2. Run `Isle_0.1.0_x64-setup.exe`
+2. Run `Isle_0.2.4_x64-setup.exe` (or latest version)
 3. Press `Ctrl+Alt+Space` to show the pill
 4. Click to expand and access all features
 
@@ -35,6 +35,45 @@ reminders, one-tap modes, time-based routines and wallpaper rotation, in a pill 
 - **Close**: Press `Esc` or click outside
 - **Switch Tabs**: Click tab icons or use `Alt+1..6`
 - **Settings**: Click the Settings tab in the expanded island
+
+## Changelog
+
+### v2.1 (Current)
+**Security & Reliability Improvements**
+- Added path/URL validation to prevent arbitrary file/URL launch
+- Implemented database corruption recovery with automatic backup
+- Replaced unsafe unwrap/expect calls with proper error handling
+- Added bounds checking for all array/vector indexing operations
+- Added scheduler shutdown hook for clean thread termination
+- Removed dead code and unused compiler warnings
+
+**Performance Improvements**
+- Added concurrency limit for icon extraction (max 4 concurrent operations)
+- Optimized system polling to stop when features are disabled
+- Reduced CPU usage when auto-hide features are turned off
+
+**Accessibility Improvements**
+- Added ARIA roles and keyboard navigation to modal overlays
+- Added aria-label to all icon-only buttons
+- Implemented reduced motion support for motion-sensitive users
+- Improved screen reader compatibility
+
+**Code Quality**
+- Added named constants for magic numbers in scheduler
+- Standardized version numbers across all configuration files
+- Added CHANGELOG.md for tracking version history
+- Fixed hotkey documentation inconsistency
+
+**Build & Release**
+- Version standardized to 0.2.4 across Cargo.toml, tauri.conf.json, and package.json
+- All tests passing (23 Rust unit tests)
+- Frontend build with zero warnings
+
+### v0.1.0
+- Initial release with core Dynamic Island functionality
+- Media controls, clipboard history, tasks, calendar
+- Modes, routines, and wallpaper rotation
+- System integration (fullscreen, battery, idle detection)
 
 ## Data Storage
 
