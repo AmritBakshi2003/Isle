@@ -98,14 +98,24 @@ pub fn run() {
                 island::register_hotkey(&handle, &toggle_hk);
             }
 
-            // 8. System tray
+            // 7. System tray
             let show = MenuItem::with_id(app, "show", "Show / Hide", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Isle",   true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &settings, &quit])?;
 
+            let icon = match app.default_window_icon() {
+                Some(icon) => icon.clone(),
+                None => {
+                    eprintln!("Warning: Could not get default window icon for tray");
+                    // Use a fallback or skip - for now, continue without icon
+                    // This is a warning, not fatal
+                    return Ok(());
+                }
+            };
+
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(icon)
                 .menu(&menu)
                 .tooltip("Isle — Dynamic Island for Windows")
                 .on_menu_event(|app, event| match event.id.as_ref() {

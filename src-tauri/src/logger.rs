@@ -50,15 +50,6 @@ pub fn get_level() -> LogLevel {
         .unwrap_or(LogLevel::Error) // Default to error if lock is poisoned
 }
 
-/// Log an error message (always shown unless level is None)
-pub fn error(msg: &str) {
-    if get_level() >= LogLevel::Error {
-        let log_msg = format!("[isle ERROR] {}", msg);
-        eprintln!("{}", log_msg);
-        write_to_file(&log_msg);
-    }
-}
-
 /// Log an info message (only shown if level is Info)
 pub fn info(msg: &str) {
     if get_level() >= LogLevel::Info {

@@ -17,7 +17,7 @@
   let iconUrls = $state({});
   let failedIcons = $state(new Set());  // Track failed icon loads
   let failedAppIcons = $state(new Set());  // Track failed picker icon loads
-  let searchInputRef;
+  let searchInputRef = $state(null);
 
   // Check if app is already added
   function isAppAdded(app) {
@@ -382,7 +382,7 @@
 <div class="utility-drawer">
   <div class="drawer-header">
     <h2>MY APPS</h2>
-    <button class="add-btn" onclick={openAppPicker} title="Add App Shortcut">
+    <button class="add-btn" onclick={openAppPicker} aria-label="Add App Shortcut" title="Add App Shortcut">
       <Icon name="plus" size={20} />
     </button>
   </div>
@@ -416,8 +416,16 @@
   {/if}
 
   {#if showAppPicker}
-    <div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) showAppPicker = false; }}>
-      <div class="modal" role="dialog" tabindex="-1">
+    <div 
+      class="modal-overlay" 
+      role="dialog" 
+      aria-modal="true"
+      aria-label="Add App"
+      tabindex="-1"
+      onclick={(e) => { if (e.target === e.currentTarget) showAppPicker = false; }}
+      onkeydown={(e) => { if (e.key === 'Escape') showAppPicker = false; }}
+    >
+      <div class="modal">
         <div class="modal-header">
           <div class="search-container">
             <Icon name="search" size={16} />
@@ -428,7 +436,7 @@
               bind:this={searchInputRef}
             />
           </div>
-          <button class="close-btn" onclick={() => showAppPicker = false}>
+          <button class="close-btn" onclick={() => showAppPicker = false} aria-label="Close">
             <Icon name="close" size={16} />
           </button>
         </div>

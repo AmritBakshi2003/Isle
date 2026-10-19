@@ -5,6 +5,7 @@ use std::fs;
 use std::hash::Hasher;
 use std::path::PathBuf;
 use std::os::windows::ffi::OsStrExt;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use windows::Win32::UI::Shell::SHCreateItemFromParsingName;
 use windows::Win32::UI::Shell::IShellItemImageFactory;
 use windows::Win32::UI::Shell::SIIGBF_BIGGERSIZEOK;
@@ -13,6 +14,10 @@ use windows::Win32::System::Com::CoInitializeEx;
 use windows::Win32::System::Com::COINIT_APARTMENTTHREADED;
 use windows::Win32::Graphics::Gdi::GetDIBits;
 use windows::Win32::Graphics::Gdi::DeleteObject;
+
+// Limit concurrent icon extractions to prevent thread pool exhaustion
+static ACTIVE_EXTRACTIONS: AtomicUsize = AtomicUsize::new(0);
+const MAX_CONCURRENT_EXTRACTIONS: usize = 4;
 use windows::Win32::Graphics::Gdi::GetDC;
 use windows::Win32::Graphics::Gdi::ReleaseDC;
 use windows::Win32::Graphics::Gdi::BITMAPINFO;
@@ -51,13 +56,26 @@ pub fn extract_icon_from_path(exe_path: &str, app_data_dir: &std::path::Path) ->
         return Ok(icon_filename);
     }
 
+    // Limit concurrent extractions to prevent thread pool exhaustion
+    loop {
+        let current = ACTIVE_EXTRACTIONS.load(Ordering::Relaxed);
+        if current < MAX_CONCURRENT_EXTRACTIONS {
+            match ACTIVE_EXTRACTIONS.compare_exchange_weak(current, current + 1, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break, // Successfully acquired slot
+                Err(_) => continue, // Race condition, retry
+            }
+        } else {
+            // Wait a bit before retrying
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     // Initialize COM (ignore "already initialized" error)
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
 
-    // Try to extract actual Windows icon
-    match extract_windows_icon(exe_path, &icon_path) {
+    let result = match extract_windows_icon(exe_path, &icon_path) {
         Ok(()) => Ok(icon_filename),
         Err(e) => {
             eprintln!("Icon extraction failed for {}: {}", exe_path, e);
@@ -65,7 +83,12 @@ pub fn extract_icon_from_path(exe_path: &str, app_data_dir: &std::path::Path) ->
             create_app_icon(&icon_path, exe_path).map_err(|e| e.to_string())?;
             Ok(icon_filename)
         }
-    }
+    };
+
+    // Release the slot
+    ACTIVE_EXTRACTIONS.fetch_sub(1, Ordering::Relaxed);
+
+    result
 }
 
 /// Extract actual Windows icon from executable using IShellItemImageFactory
@@ -149,10 +172,11 @@ fn bitmap_to_png(hbitmap: windows::Win32::Graphics::Gdi::HBITMAP, output_path: &
         let mut image_data = Vec::with_capacity((ICON_SIZE * ICON_SIZE * 4) as usize);
 
         for i in (0..bits.len()).step_by(4) {
-            let b = bits[i];
-            let g = bits[i + 1];
-            let r = bits[i + 2];
-            let a = bits[i + 3];
+            // Safe indexing with bounds checking
+            let b = bits.get(i).copied().unwrap_or(0);
+            let g = bits.get(i + 1).copied().unwrap_or(0);
+            let r = bits.get(i + 2).copied().unwrap_or(0);
+            let a = bits.get(i + 3).copied().unwrap_or(0);
 
             if a > 0 {
                 has_alpha = true;

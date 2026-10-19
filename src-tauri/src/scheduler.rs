@@ -23,6 +23,12 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
+// Constants for time-based operations
+const SAFETY_NET_SECONDS: i64 = 300; // 5 minutes - worst-case idle wake-up
+const REMINDER_WINDOW_SECONDS: i64 = 300; // 5 minutes - window after start to show notification
+const GRACE_PERIOD_SECONDS: i64 = 300; // 5 minutes - grace period for routine missed detection
+const TIME_ROUTINE_CHECK_SECONDS: i64 = 60; // 1 minute - check interval for time-triggered routines
+
 pub struct Scheduler(Mutex<Sender<()>>);
 
 impl Scheduler {
@@ -40,10 +46,21 @@ pub fn start(app: AppHandle) -> Scheduler {
         loop {
             let wait = tick(&app, is_startup);
             is_startup = false;
-            if let Err(RecvTimeoutError::Disconnected) = rx.recv_timeout(wait) {
-                break;
+            match rx.recv_timeout(wait) {
+                Ok(_) => {
+                    // Wake signal received - continue loop
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    // Channel disconnected - thread shutting down
+                    // Perform any cleanup before exiting
+                    break;
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    // Timeout reached - continue loop
+                }
             }
         }
+        // Thread exit - resources are automatically cleaned up via RAII
     });
     Scheduler(Mutex::new(tx))
 }
@@ -52,10 +69,10 @@ pub fn start(app: AppHandle) -> Scheduler {
 fn tick(app: &AppHandle, _is_startup: bool) -> Duration {
     let db = app.state::<Db>();
     let now = now();
-    let mut next = now + 300;
+    let mut next = now + SAFETY_NET_SECONDS;
 
-    // 1) Event reminders. Fire once when now >= start - remind_min*60 and notified=0 and now < start + 300 (5-minute window after start).
-    // Never fire for events that already began more than 5 minutes ago; mark those notified=1 silently.
+    // 1) Event reminders. Fire once when now >= start - remind_min*60 and notified=0 and now < start + REMINDER_WINDOW_SECONDS.
+    // Never fire for events that already began more than REMINDER_WINDOW_SECONDS ago; mark those notified=1 silently.
     let due: Vec<(i64, String, i64)> = db
         .with(|c| {
             let mut s = c.prepare(
@@ -67,13 +84,13 @@ fn tick(app: &AppHandle, _is_startup: bool) -> Duration {
         .unwrap_or_default();
     
     for (id, title, starts) in due {
-        // Only show notification if within the 5-minute window after start
-        if now < starts + 300 {
+        // Only show notification if within the REMINDER_WINDOW_SECONDS window after start
+        if now < starts + REMINDER_WINDOW_SECONDS {
             let mins = ((starts - now) / 60).max(0);
             let body = if mins == 0 { "Starting now".to_string() } else { format!("In {mins} min") };
             let _ = actions::notify(app, &title, &body);
         }
-        // Mark as notified after checking (even if past the 5-minute window, to avoid retries)
+        // Mark as notified after checking (even if past the REMINDER_WINDOW_SECONDS window, to avoid retries)
         let _ = db.with(|c| c.execute("UPDATE events SET notified=1 WHERE id=?1", [id]));
     }
     
@@ -107,23 +124,26 @@ fn tick(app: &AppHandle, _is_startup: bool) -> Duration {
     let (hhmm, dow) = (local.format("%H:%M").to_string(), local.weekday().num_days_from_sunday() as i64);
     let mut has_time_routine = false;
     for (id, _name, last_run, trig, acts) in routines {
-        if trig["kind"] != "time" {
+        // Safe JSON indexing with .get()
+        let kind = trig.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+        if kind != "time" {
             continue;
         }
         has_time_routine = true;
-        let days_ok = trig["days"]
-            .as_array()
+        let days_ok = trig.get("days")
+            .and_then(|d| d.as_array())
             .map(|d| d.is_empty() || d.iter().any(|x| x.as_i64() == Some(dow)))
             .unwrap_or(true);
-        // Check if routine was missed (last_run > 5 minutes ago or in a different hour)
-        let missed = last_run < now - 300 || last_run / 60 != now / 60;
-        if trig["at"].as_str() == Some(hhmm.as_str()) && days_ok && missed {
+        // Check if routine was missed (last_run > GRACE_PERIOD_SECONDS ago or in a different hour)
+        let missed = last_run < now - GRACE_PERIOD_SECONDS || last_run / 60 != now / 60;
+        let at_time = trig.get("at").and_then(|a| a.as_str()).unwrap_or("");
+        if at_time == hhmm && days_ok && missed {
             let _ = db.with(|c| c.execute("UPDATE routines SET last_run=?1 WHERE id=?2", [now, id]));
             let _ = actions::run(app, &acts);
         }
     }
     if has_time_routine {
-        next = next.min(now + 60 - now % 60);
+        next = next.min(now + TIME_ROUTINE_CHECK_SECONDS - now % TIME_ROUTINE_CHECK_SECONDS);
     }
 
     // 4) Wallpaper rotation.

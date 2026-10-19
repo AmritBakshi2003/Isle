@@ -196,18 +196,20 @@ pub fn month_event_days(db: State<Db>, year: i32, month: i32, tz_offset_min: i32
     if tz_offset_min < -14 * 60 || tz_offset_min > 14 * 60 {
         return Err(format!("Invalid timezone offset: {}. Must be between -840 and 840 minutes", tz_offset_min));
     }
-    
+
     let offset_secs = tz_offset_min as i64 * 60;
-    
+
     // Calculate UTC range for the entire month
-    let month_start = chrono::NaiveDate::from_ymd_opt(year, month.try_into().unwrap(), 1)
+    let month_u32: u32 = month.try_into().map_err(|_| "Invalid month value")?;
+    let month_start = chrono::NaiveDate::from_ymd_opt(year, month_u32, 1)
         .ok_or("Invalid month")?
         .and_hms_opt(0, 0, 0)
         .ok_or("Invalid date")?;
     let month_end = if month == 12 {
         chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
     } else {
-        chrono::NaiveDate::from_ymd_opt(year, (month + 1).try_into().unwrap(), 1)
+        let next_month_u32: u32 = (month + 1).try_into().map_err(|_| "Invalid month value")?;
+        chrono::NaiveDate::from_ymd_opt(year, next_month_u32, 1)
     }
     .ok_or("Invalid date")?
     .and_hms_opt(0, 0, 0)

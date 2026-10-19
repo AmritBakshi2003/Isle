@@ -92,11 +92,91 @@ const MIGRATIONS: &[(&str, &str)] = &[
 
 impl Db {
     pub fn open(path: &std::path::Path) -> rusqlite::Result<Self> {
+        // Try to open the database
+        let c = match Connection::open(path) {
+            Ok(conn) => conn,
+            Err(e) => {
+                eprintln!("Failed to open database at {:?}: {}", path, e);
+                // Attempt recovery by creating a new database
+                return Self::open_with_recovery(path);
+            }
+        };
+
+        // Set up journal mode
+        if let Err(e) = c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;") {
+            eprintln!("Failed to set journal mode: {}", e);
+        }
+
+        // Run integrity check
+        if let Err(e) = Self::check_integrity(&c) {
+            eprintln!("Database integrity check failed: {}", e);
+            // Attempt recovery by backing up and recreating
+            return Self::open_with_recovery(path);
+        }
+
+        // Apply schema and migrations
+        if let Err(e) = c.execute_batch(SCHEMA) {
+            eprintln!("Failed to apply schema: {}", e);
+            return Self::open_with_recovery(path);
+        }
+
+        if let Err(e) = run_migrations(&c) {
+            eprintln!("Failed to run migrations: {}", e);
+            return Self::open_with_recovery(path);
+        }
+
+        seed(&c)?;
+        Ok(Db(Mutex::new(c)))
+    }
+
+    /// Check database integrity using PRAGMA integrity_check
+    fn check_integrity(c: &Connection) -> rusqlite::Result<()> {
+        let mut stmt = c.prepare("PRAGMA integrity_check")?;
+        let result: String = stmt.query_row([], |r| r.get(0))?;
+        if result != "ok" {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+                Some(result),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Attempt to recover from corrupt database by backing up and recreating
+    fn open_with_recovery(path: &std::path::Path) -> rusqlite::Result<Self> {
+        eprintln!("Attempting database recovery for {:?}", path);
+        
+        // Create backup of corrupt database
+        let backup_path = path.with_extension("db.corrupt");
+        if path.exists() {
+            if let Err(e) = std::fs::copy(path, &backup_path) {
+                eprintln!("Failed to create backup: {}", e);
+            } else {
+                eprintln!("Corrupt database backed up to {:?}", backup_path);
+            }
+        }
+
+        // Remove corrupt database
+        if path.exists() {
+            if let Err(e) = std::fs::remove_file(path) {
+                eprintln!("Failed to remove corrupt database: {}", e);
+            }
+        }
+
+        // Remove WAL files if they exist
+        let wal_path = path.with_extension("db-wal");
+        let shm_path = path.with_extension("db-shm");
+        let _ = std::fs::remove_file(&wal_path);
+        let _ = std::fs::remove_file(&shm_path);
+
+        // Create fresh database
         let c = Connection::open(path)?;
         c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         c.execute_batch(SCHEMA)?;
         run_migrations(&c)?;
         seed(&c)?;
+        
+        eprintln!("Database recovery complete - fresh database created");
         Ok(Db(Mutex::new(c)))
     }
 

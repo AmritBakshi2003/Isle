@@ -25,7 +25,6 @@ use windows::{
 pub struct SystemState {
     pub is_fullscreen: Arc<AtomicBool>,
     pub is_battery_saver: Arc<AtomicBool>,
-    pub auto_hide_idle: Arc<AtomicBool>,
     pub should_hide: Arc<AtomicBool>,
     // Cached settings for hide conditions
     pub hide_fullscreen: Arc<AtomicBool>,
@@ -38,7 +37,6 @@ impl SystemState {
         Self {
             is_fullscreen: Arc::new(AtomicBool::new(false)),
             is_battery_saver: Arc::new(AtomicBool::new(false)),
-            auto_hide_idle: Arc::new(AtomicBool::new(false)),
             should_hide: Arc::new(AtomicBool::new(false)),
             hide_fullscreen: Arc::new(AtomicBool::new(false)),
             hide_battery_saver: Arc::new(AtomicBool::new(false)),
@@ -77,12 +75,15 @@ pub fn start(app: AppHandle) -> SystemState {
 fn start_fullscreen_watcher(app: AppHandle, state: SystemState) {
     std::thread::spawn(move || {
         loop {
-            let is_fullscreen = detect_fullscreen();
-            let was_fullscreen = state.is_fullscreen.load(Ordering::Relaxed);
+            // Only poll if hide_fullscreen is enabled
+            if state.hide_fullscreen.load(Ordering::Relaxed) {
+                let is_fullscreen = detect_fullscreen();
+                let was_fullscreen = state.is_fullscreen.load(Ordering::Relaxed);
 
-            if is_fullscreen != was_fullscreen {
-                state.is_fullscreen.store(is_fullscreen, Ordering::Relaxed);
-                check_hide_condition(&state, &app);
+                if is_fullscreen != was_fullscreen {
+                    state.is_fullscreen.store(is_fullscreen, Ordering::Relaxed);
+                    check_hide_condition(&state, &app);
+                }
             }
 
             std::thread::sleep(Duration::from_secs(1));
@@ -103,7 +104,10 @@ fn detect_fullscreen() -> bool {
         // Exclude desktop shell windows (Progman, WorkerW)
         let mut class_buf = [0u16; 256];
         let len = GetClassNameW(hwnd, &mut class_buf);
-        let class_name = String::from_utf16_lossy(&class_buf[..len as usize]);
+        // Safe bounds checking before slicing
+        let len_usize = len as usize;
+        let slice_end = if len_usize > class_buf.len() { class_buf.len() } else { len_usize };
+        let class_name = String::from_utf16_lossy(&class_buf[..slice_end]);
         if class_name == "Progman" || class_name == "WorkerW" {
             return false;
         }
@@ -135,13 +139,16 @@ fn start_battery_saver_watcher(app: AppHandle, state: SystemState) {
         // For now, use polling as a simpler approach
         // Full event-driven implementation would require window handle and complex notification handling
         loop {
-            // Simple check via Windows Power Management API
-            let battery_saver_enabled = detect_battery_saver();
-            let was_enabled = state.is_battery_saver.load(Ordering::Relaxed);
+            // Only poll if hide_battery_saver is enabled
+            if state.hide_battery_saver.load(Ordering::Relaxed) {
+                // Simple check via Windows Power Management API
+                let battery_saver_enabled = detect_battery_saver();
+                let was_enabled = state.is_battery_saver.load(Ordering::Relaxed);
 
-            if battery_saver_enabled != was_enabled {
-                state.is_battery_saver.store(battery_saver_enabled, Ordering::Relaxed);
-                check_hide_condition(&state, &app);
+                if battery_saver_enabled != was_enabled {
+                    state.is_battery_saver.store(battery_saver_enabled, Ordering::Relaxed);
+                    check_hide_condition(&state, &app);
+                }
             }
 
             std::thread::sleep(Duration::from_secs(5));
