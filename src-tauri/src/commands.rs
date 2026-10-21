@@ -405,10 +405,11 @@ pub fn settings_get_all(db: State<Db>) -> Result<serde_json::Value, String> {
     })
 }
 
-/// Show the settings window.
-/// The window is pre-created in tauri.conf.json but hidden by default.
+/// Show the settings window, building it on first use (see island::show_settings).
 #[tauri::command]
 pub fn open_settings(app: AppHandle) -> Result<(), String> {
+    // NOTE: this command is deliberately synchronous and must stay cheap — it
+    // only hands the work to the main thread (see island::show_settings).
     crate::island::show_settings(&app);
     Ok(())
 }

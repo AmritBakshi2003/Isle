@@ -131,6 +131,17 @@ their rows are still in the database on purpose (data loss is worse than dead ta
    position from the Windows location service locally and sends only the resulting coordinates, same as a typed
    place. Never send the user's IP, device id or a place name together with a forecast.
 6. Add every new command to `generate_handler!` in `lib.rs` AND to the mock in `lib/api.js`.
+7. **Windows are built on the main thread.** `WebviewWindowBuilder::build()` creates a WebView2 controller, and that
+   only ever completes on the thread that owns the event loop. A non-`async` command runs on the async pool, so
+   building there blocked forever: the Settings window never appeared *and* the held window-manager lock stopped the
+   pill answering `island_resize` — the whole app looked frozen. `island::show_settings` therefore hands the build to
+   `app.run_on_main_thread(...)`, and any future window must do the same.
+8. **Anything that watches the whole machine is opt-in.** The two progress watchers report system-wide state, not
+   Isle's own work: `progress_download` enumerates every BITS job (Windows Update, Store, browser and Defender
+   updates) and `progress_app_install` fires whenever `msiserver` runs. Both default to off. When the download bar
+   is on, the label must name the BITS job ("Downloading Windows Update…"); an unattributed "Downloading…" in the
+   pill is a bug (`progress::bits_label`). The install bar stays a Windows Installer bar by name in Settings — the
+   product name is not cheaply available from the service state.
 7. Keep SQL column names free of keywords (see `db.rs` header). Schema changes: add `ALTER TABLE` migration steps, never edit
    the `CREATE TABLE`s in place for existing users.
 

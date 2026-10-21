@@ -16,8 +16,8 @@
     module_clipboard: 'true', module_workspace: 'true',
     media_album_art: 'true', media_progress_ring: 'true',
     media_controls: 'full', media_update_speed: '1000',
-    progress_file_copy: 'true', progress_download: 'true',
-    progress_app_install: 'true', progress_battery_stretch: 'true',
+    progress_file_copy: 'true', progress_download: 'false',
+    progress_app_install: 'false', progress_battery_stretch: 'true',
     progress_ring_style: 'arc', progress_auto_dismiss: '3',
     hotkey_toggle: 'ctrl+alt+space',
     log_level: 'error', log_to_file: 'false',
@@ -606,19 +606,25 @@
       <h2>Live Progress</h2>
 
       {#each [
-        {key:'progress_file_copy',       label:'File Copy Bar'},
-        {key:'progress_download',        label:'Download Bar (BITS)'},
-        {key:'progress_app_install',     label:'App Install Bar'},
-        {key:'progress_battery_stretch', label:'Battery Stretch Animation'},
+        {key:'progress_file_copy',       label:'File Copy Bar',             note:''},
+        {key:'progress_download',        label:'System Download Bar',       note:'every BITS download on this PC — Windows Update, Store, browsers'},
+        {key:'progress_app_install',     label:'System Install Bar',        note:'any Windows Installer session, not just Isle'},
+        {key:'progress_battery_stretch', label:'Battery Stretch Animation', note:''},
       ] as p}
       <div class="row">
-        <span class="row-label">{p.label}</span>
+        <span class="row-label">{p.label}{#if p.note} <span class="val">{p.note}</span>{/if}</span>
         <button class="toggle" class:on={bool(s[p.key])}
                 onclick={()=>save(p.key, String(!bool(s[p.key])))}>
           {bool(s[p.key]) ? 'On' : 'Off'}
         </button>
       </div>
       {/each}
+
+      <div class="info-box">
+        The two system bars watch Windows itself, not Isle, so they can fire for
+        updates you never started. They are off by default — turn one on and the
+        pill names the source, e.g. "Downloading Windows Update…".
+      </div>
 
       <div class="row">
         <span class="row-label">Ring Style</span>

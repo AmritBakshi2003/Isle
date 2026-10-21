@@ -88,10 +88,34 @@ pub fn island_resize(app: AppHandle, expanded: bool) {
 // lib.rs on_window_event). Reopening it costs a few hundred ms, not memory.
 
 /// Show the settings window, creating it the first time.
+///
+/// WHY the build is handed to the main thread: `WebviewWindowBuilder::build()`
+/// creates a WebView2 controller, and that only ever completes on the thread
+/// that owns the event loop. A non-`async` `#[tauri::command]` runs on the
+/// async pool, so building there blocked that worker forever: the window never
+/// appeared, the call held the window-manager lock, and the pill's own
+/// `island_resize` stopped answering — i.e. the whole app looked frozen.
+/// Dispatching the build makes opening Settings deterministic.
 pub fn show_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.show();
         let _ = w.unminimize();
+        let _ = w.set_focus();
+        return;
+    }
+
+    let handle = app.clone();
+    // From the main thread (tray menu) this simply runs on the next tick.
+    if let Err(e) = app.run_on_main_thread(move || build_settings_window(&handle)) {
+        eprintln!("[isle] could not queue settings window: {e}");
+    }
+}
+
+/// Build and show the settings window. Must run on the main thread.
+fn build_settings_window(app: &AppHandle) {
+    // Two quick clicks can both queue a build; only the first one wins.
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.show();
         let _ = w.set_focus();
         return;
     }

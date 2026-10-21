@@ -26,7 +26,7 @@ springs open and closed.
 
 ### For Users (Download Installer)
 1. Download the latest NSIS installer from the [Releases](https://github.com/AmritBakshi2003/Isle/releases) page
-2. Run `Isle_0.3.1_x64-setup.exe` (or latest version)
+2. Run `Isle_0.3.2_x64-setup.exe` (or latest version)
 3. Press `Ctrl+Alt+Space` to show the pill
 4. Click to expand and access all features
 
@@ -45,6 +45,17 @@ springs open and closed.
 - **Settings**: Click the Settings tab in the expanded island
 
 ## Changelog
+
+### v0.3.2
+**Fixes**
+- **Settings no longer freezes the app.** The window is built on demand, but creating a WebView2 window off the main
+  thread never completes: the call blocked, the pill stopped resizing and the Settings page never appeared (it worked
+  only sometimes, which is why it felt glitchy). The build is now dispatched to the main thread, so Settings opens
+  every time.
+- **The "Downloading…" and "Installing…" bars were watching your whole PC**, not Isle — every BITS job (Windows
+  Update, the Store, browser and Defender updates) and every Windows Installer session. That is why they fired for
+  downloads you never started. Both are now **off by default** (Settings → Live Progress), and when one is on the
+  pill names the source, e.g. "Downloading Windows Update…".
 
 ### v0.3.1
 **Performance**

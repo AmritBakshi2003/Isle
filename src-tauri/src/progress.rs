@@ -136,11 +136,14 @@ fn start_bits_watcher(app: AppHandle, tx: SyncSender<Msg>) {
             match poll_bits() {
                 Ok((v, label)) if v >= 0 => {
                     was_active = true;
-                    // Check if download progress is enabled
+                    // OPT-IN: this reports every BITS job on the machine, not
+                    // just Isle's. Windows Update, the Store, browser and
+                    // Defender updates all use BITS, so on by default it made
+                    // the pill announce downloads the user never started.
                     let enabled = app.try_state::<crate::db::Db>()
                         .and_then(|db| db.setting("progress_download"))
                         .map(|s| s == "true")
-                        .unwrap_or(true);
+                        .unwrap_or(false);
                     if enabled {
                         let _ = tx.try_send(Msg::Progress { value: v, label });
                     }
@@ -181,6 +184,7 @@ fn poll_bits() -> windows::core::Result<(i64, String)> {
     let jobs = unsafe { mgr.EnumJobs(0)? };
 
     let (mut xferred, mut total, mut active) = (0u64, 0u64, 0u32);
+    let mut names: Vec<String> = Vec::new();
 
     loop {
         // windows-rs 0.58: Next takes &mut [Option<T>] slice (no celt arg).
@@ -200,13 +204,46 @@ fn poll_bits() -> windows::core::Result<(i64, String)> {
         xferred += p.BytesTransferred;
         total   += p.BytesTotal;
         active  += 1;
+        // NAME THE SOURCE. "Downloading..." on its own is unattributable —
+        // the job usually belongs to Windows or a browser, not to Isle.
+        if names.len() < 2 {
+            if let Some(n) = job_display_name(&job) {
+                if !n.is_empty() { names.push(n); }
+            }
+        }
     }
 
     if active == 0 || total == 0 { return Ok((-1, String::new())); }
 
     let pct = ((xferred as f64 / total as f64) * 100.0).round() as i64;
-    let label = if active == 1 { "Downloading...".into() } else { format!("{active} downloads...") };
-    Ok((pct.clamp(0, 99), label))
+    Ok((pct.clamp(0, 99), bits_label(active, &names)))
+}
+
+/// Label for the pill: name the BITS job so "Downloading..." is never
+/// unattributable. Split out from the COM code so the wording is testable.
+#[cfg(target_os = "windows")]
+fn bits_label(active: u32, names: &[String]) -> String {
+    let first = names.first().map(|s| s.trim()).filter(|s| !s.is_empty());
+    if active == 0 { return String::new(); }
+    match first {
+        Some(name) if active == 1 => format!("Downloading {name}..."),
+        Some(name)              => format!("Downloading {name} (+{} more)...", active - 1),
+        None if active == 1     => "Downloading...".into(),
+        None                    => format!("{active} downloads..."),
+    }
+}
+
+/// Read a BITS job's display name. The string is allocated by COM, so it has
+/// to be released with CoTaskMemFree or every 5-second poll would leak.
+#[cfg(target_os = "windows")]
+fn job_display_name(
+    job: &windows::Win32::Networking::BackgroundIntelligentTransferService::IBackgroundCopyJob,
+) -> Option<String> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    let ptr = unsafe { job.GetDisplayName() }.ok()?;
+    let s = unsafe { ptr.to_string() }.ok()?;
+    unsafe { CoTaskMemFree(Some(ptr.as_ptr() as *const _)) };
+    Some(s)
 }
 
 // App install: watch Windows Installer service. 3s idle poll, 2s active poll.
@@ -224,10 +261,12 @@ fn start_install_watcher(app: AppHandle, tx: SyncSender<Msg>) {
             // Read the setting BEFORE touching the service manager: with install
             // reporting off we should not be querying the SCM every 3 seconds for
             // the whole session. (msiserver is idle almost all of the time.)
+            // OPT-IN: msiserver is started by Windows Update, Office, drivers
+            // and any MSI/MSIX install, so this is off unless asked for.
             let enabled = app.try_state::<crate::db::Db>()
                 .and_then(|db| db.setting("progress_app_install"))
                 .map(|s| s == "true")
-                .unwrap_or(true);
+                .unwrap_or(false);
 
             if !enabled {
                 std::thread::sleep(Duration::from_secs(27));
@@ -272,5 +311,36 @@ fn msiserver_running() -> bool {
         let _ = CloseServiceHandle(svc);
         let _ = CloseServiceHandle(scm);
         running
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::bits_label;
+
+    fn names(v: &[&str]) -> Vec<String> { v.iter().map(|s| s.to_string()).collect() }
+
+    #[test]
+    fn bits_label_names_a_single_job() {
+        assert_eq!(bits_label(1, &names(&["Windows Update"])), "Downloading Windows Update...");
+    }
+
+    #[test]
+    fn bits_label_summarises_extra_jobs() {
+        assert_eq!(
+            bits_label(3, &names(&["Microsoft Store"])),
+            "Downloading Microsoft Store (+2 more)..."
+        );
+    }
+
+    #[test]
+    fn bits_label_falls_back_when_the_name_is_missing() {
+        assert_eq!(bits_label(1, &names(&[])), "Downloading...");
+        assert_eq!(bits_label(2, &names(&["   "])), "2 downloads...");
+    }
+
+    #[test]
+    fn bits_label_is_empty_when_nothing_is_copying() {
+        assert_eq!(bits_label(0, &names(&["x"])), "");
     }
 }
