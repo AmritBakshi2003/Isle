@@ -1,6 +1,6 @@
 [package]
 name = "isle"
-version = "0.3.0"
+version = "0.3.1"
 description = "Isle: a Dynamic-Island-style productivity overlay for Windows"
 edition = "2021"
 
@@ -32,6 +32,7 @@ tempfile = "3"
 clipboard-master = "3.1"   # event-driven clipboard listener (no polling)
 windows = { version = "0.58", features = [
   "Devices_Power",
+  "Devices_Geolocation",      # "use my location" via the same service as the Weather app
   "System_Power",
   "Foundation",
   "Foundation_Collections",   # GetSessions(): pick the playing app, not the last-touched one

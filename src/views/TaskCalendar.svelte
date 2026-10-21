@@ -6,7 +6,7 @@
   import { call, on } from '../lib/api.js';
   import { toast } from '../lib/state.svelte.js';
   import Icon from '../lib/Icon.svelte';
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
 
   const EVENT_COLOR = 'var(--agenda-event)';
   const TASK_COLOR = 'var(--agenda-task)';
@@ -20,9 +20,12 @@
   let calendarExpanded = $state(false);
   let showEventPopup = $state(false);
   let editingEvent = $state(null);
-  let weekOffset = $state(0); // Week offset from today
-  // +1 when moving forward, -1 when moving back: the strip slides the way you go
-  let weekDir = $state(1);
+  let weekOffset = $state(0); // Week offset from today (anchor of the centred page)
+  // The strip is a real horizontal scroller with three week-pages
+  // (previous | current | next). A trackpad swipe moves it natively; when it
+  // settles on an outer page the anchor moves one week and the scroller
+  // recentres, so it pages forever without ever growing the DOM.
+  let stripEl = $state(null);
 
   // Event form state
   let eventTitle = $state('');
@@ -55,14 +58,14 @@
   // Derived: is selected date today?
   let isToday = $derived(selectedDate === todayStr);
 
-  // Derived: week strip days (7 days centered on today's date with offset)
-  let weekDays = $derived.by(() => {
+  /** Seven days of the week `offset` weeks from today (Monday first). */
+  function buildWeek(offset) {
     const now = new Date();
-    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (weekOffset * 7));
+    const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset * 7);
     const dayOfWeek = date.getDay();
     const diff = (dayOfWeek - WEEK_START + 7) % 7;
     date.setDate(date.getDate() - diff);
-    
+
     const days = [];
     for (let i = 0; i < 7; i++) {
       const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -75,7 +78,11 @@
       date.setDate(date.getDate() + 1);
     }
     return days;
-  });
+  }
+
+  // The three pages the scroller holds; the middle one is the anchor week.
+  let pages = $derived([weekOffset - 1, weekOffset, weekOffset + 1]);
+  let pageDays = $derived(pages.map(buildWeek));
 
   // Derived: full month calendar days
   let calendarDays = $derived.by(() => {
@@ -181,15 +188,80 @@
     refresh();
   }
 
-  function prevWeek() {
-    weekDir = -1;
-    weekOffset -= 1;
+  // -- week strip scrolling ---------------------------------------------------
+  // No timers run while the strip is still: everything below is driven by a
+  // scroll/wheel event, and one short settle timeout after the last one.
+  const PAGE_SETTLE_MS = 130; // scrollend is not available in every WebView2
+  let settleTimer;
+
+  /** Move the anchor one week and recentre: the page that was on the edge
+   *  becomes the middle page of the new set, so nothing visibly jumps. */
+  async function shiftWeek(dir) {
+    weekOffset += dir;
+    await tick();
+    if (stripEl) stripEl.scrollLeft = stripEl.clientWidth;
   }
 
-  function nextWeek() {
-    weekDir = 1;
-    weekOffset += 1;
+  function onStripScroll() {
+    if (!stripEl) return;
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(settleStrip, PAGE_SETTLE_MS);
   }
+
+  /** Commit once the user stops scrolling on an outer page. */
+  function settleStrip() {
+    const el = stripEl;
+    if (!el) return;
+    const w = el.clientWidth || 1;
+    const page = Math.round(el.scrollLeft / w);
+    if (page <= 0) shiftWeek(-1);
+    else if (page >= 2) shiftWeek(1);
+  }
+
+  /** Chevrons glide one page over; settleStrip() then commits it. */
+  function stepWeek(dir) {
+    const el = stripEl;
+    if (!el) { weekOffset += dir; return; }
+    const w = el.clientWidth || 1;
+    const to = Math.round(el.scrollLeft / w) + dir;
+    if (to < 0 || to > 2) { shiftWeek(dir); return; } // already on the edge page
+    el.scrollTo({ left: to * w, behavior: 'smooth' });
+    onStripScroll(); // fallback for the case where no scroll event fires
+  }
+
+  function prevWeek() { stepWeek(-1); }
+  function nextWeek() { stepWeek(1); }
+
+  // Centre the strip whenever it mounts or the anchor moves.
+  $effect(() => {
+    const el = stripEl;
+    weekOffset; // dependency: recentre after a shift
+    if (!el) return;
+    if (el.scrollLeft !== el.clientWidth) el.scrollLeft = el.clientWidth;
+  });
+
+  // Trackpad swipes arrive as deltaX and scroll natively. A plain mouse wheel
+  // only has deltaY, so it pages instead: accumulating pixel deltas and letting
+  // CSS scroll-snap fight them does not work (each tick snaps back), so one
+  // wheel gesture above the threshold moves exactly one page via stepWeek().
+  // Listener is non-passive, so the panel never scrolls underneath the strip.
+  $effect(() => {
+    const el = stripEl;
+    if (!el) return;
+    let acc = 0;
+    const onWheel = (e) => {
+      if (Math.abs(e.deltaX) >= Math.abs(e.deltaY) || e.deltaY === 0) return;
+      e.preventDefault();
+      if (acc !== 0 && Math.sign(acc) !== Math.sign(e.deltaY)) acc = 0;
+      acc += e.deltaY;
+      if (Math.abs(acc) < 40) return;
+      const dir = acc > 0 ? 1 : -1;
+      acc = 0;
+      stepWeek(dir);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  });
 
   function prevMonth() {
     const date = new Date(selectedDateObj);
@@ -414,20 +486,23 @@
 
     <!-- Week Strip (collapsed) or Full Month (expanded) -->
     {#if !calendarExpanded}
-      <!-- Nav buttons stay put; only the week cells slide, so the arrows never move
-           under the cursor. overflow:hidden keeps the strip inside the panel. -->
+      <!-- Nav buttons stay put; the days scroll underneath them. The strip is a
+           native horizontal scroller (hidden scrollbar), so a two-finger trackpad
+           swipe just works; the wheel and the chevrons page it too. -->
       <div class="week-row">
         <button class="nav-btn" onclick={prevWeek} aria-label="Previous week">
           <Icon name="chevron-left" size={14} />
         </button>
-        <div class="week-viewport">
-          {#key weekOffset}
-            <div
-              class="week-strip"
-              style:--from={weekDir * 26}px
-            >
-              {#each weekDays as day, i (day.date)}
-                <button 
+        <div
+          class="week-viewport"
+          bind:this={stripEl}
+          onscroll={onStripScroll}
+          aria-label="Week, scroll to see other weeks"
+        >
+          {#each pageDays as days, pi (pages[pi])}
+            <div class="week-page">
+              {#each days as day, i (day.date)}
+                <button
                   class="day-cell"
                   class:today={day.isToday}
                   class:selected={day.date === selectedDate}
@@ -442,7 +517,7 @@
                 </button>
               {/each}
             </div>
-          {/key}
+          {/each}
         </div>
         <button class="nav-btn" onclick={nextWeek} aria-label="Next week">
           <Icon name="chevron-right" size={14} />
@@ -831,22 +906,26 @@
     flex: 1;
     min-width: 0;
     height: 100%;
-    overflow: hidden;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* snap to a week so a swipe always lands on a whole week */
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    /* hidden bar, still scrollable — the requested clean look */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
   }
-  .week-strip {
-    position: absolute;
-    inset: 0;
+  .week-viewport::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  .week-page {
+    flex: 0 0 100%;
+    width: 100%;
+    height: 100%;
     display: flex;
     align-items: center;
     gap: 4px;
-    will-change: transform, opacity;
-    /* the new week slides in from the side you pressed; enter-only, so the
-       previous strip disappears at once and can never linger as a ghost */
-    animation: week-in .3s cubic-bezier(.22,.9,.3,1) both;
-  }
-  @keyframes week-in {
-    from { opacity: 0; transform: translateX(var(--from, 26px)); }
-    to   { opacity: 1; transform: none; }
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
   }
 
   .nav-btn {

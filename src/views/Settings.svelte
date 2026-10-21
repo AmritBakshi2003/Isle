@@ -35,10 +35,15 @@
   let wbOn = $state(true);
   let netGateway = $state('');
   // -- weather section (weather.rs commands, not setting_set) ---------------
-  let wx = $state({ enabled: false, place: '', units: 'c', has_location: false });
+  let wx = $state({ enabled: false, place: '', units: 'c', has_location: false, lat: null, lon: null });
   let wxQuery = $state('');
   let wxBusy = $state(false);
   let wxMsg = $state('');
+  // live candidates for the typed text ("/-?\\d/" typed text is treated as coords
+  // by the backend and never triggers a search at all)
+  let wxSuggest = $state([]);
+  let wxSugOpen = $state(false);
+  let wxSearchTimer;
   // net_ping_public is stored as '1'/'0' (see network.rs), not 'true'/'false'
   const netPublic = $derived(s.net_ping_public === '1' || s.net_ping_public === true);
 
@@ -170,9 +175,78 @@
     }
   }
 
+  const isCoords = (t) => /^-?\d+(\.\d+)?\s*[,\s]\s*-?\d+(\.\d+)?$/.test(t.trim());
+
+  /** Debounced type-ahead: one request per pause, and the Rust side caches. */
+  function onWxInput() {
+    clearTimeout(wxSearchTimer);
+    const q = wxQuery.trim();
+    if (q.length < 2 || isCoords(q)) { wxSuggest = []; wxSugOpen = false; return; }
+    wxSearchTimer = setTimeout(async () => {
+      try {
+        const hits = await call('weather_place_search', { query: q });
+        // a newer keystroke may have won the race
+        if (wxQuery.trim() !== q) return;
+        wxSuggest = hits;
+        wxSugOpen = hits.length > 0;
+      } catch {
+        wxSuggest = [];
+        wxSugOpen = false; // “no match” is not an error worth shouting about
+      }
+    }, 350);
+  }
+
+  /** Pick a candidate exactly: the coordinates shown are the coordinates saved. */
+  async function pickPlace(p) {
+    wxSugOpen = false;
+    wxBusy = true;
+    wxMsg = '';
+    try {
+      const w = await call('weather_location_pick', { place: p.label, lat: p.lat, lon: p.lon });
+      Object.assign(wx, { enabled: true, place: w.place || p.label, has_location: true, lat: p.lat, lon: p.lon });
+      wxQuery = wx.place;
+      wxMsg = w.ok
+        ? `Saved — ${wx.place} is ${wxTemp(w)} right now.`
+        : (w.error || 'Location saved, but the first fetch failed.');
+      flash();
+    } catch (e) {
+      wxMsg = String(e?.message ?? e);
+    } finally {
+      wxBusy = false;
+    }
+  }
+
+  const wxTemp = (w) => `${Math.round(w.units === 'f' ? (w.temp_c * 9) / 5 + 32 : w.temp_c)}°`;
+
+  /** Windows location service (same source as the Windows Weather app). */
+  async function useDeviceLocation() {
+    wxSugOpen = false;
+    wxBusy = true;
+    wxMsg = '';
+    try {
+      const w = await call('weather_use_device_location');
+      Object.assign(wx, {
+        enabled: true,
+        place: w.place || 'Current location',
+        has_location: true,
+      });
+      wxQuery = '';
+      wxMsg = w.ok
+        ? `Using your Windows location — ${wxTemp(w)} right now.`
+        : (w.error || 'Location saved, but the first fetch failed.');
+      flash();
+    } catch (e) {
+      // Windows returns a plain string here (access denied, location off, …)
+      wxMsg = String(e?.message ?? e);
+    } finally {
+      wxBusy = false;
+    }
+  }
+
   async function applyWeatherPlace() {
     const q = wxQuery.trim();
-    if (!q) { wxMsg = 'Type a city or town first.'; return; }
+    wxSugOpen = false;
+    if (!q) { wxMsg = 'Type a city or town, or tap “Use my location”.'; return; }
     wxBusy = true;
     wxMsg = '';
     try {
@@ -653,7 +727,7 @@
     {:else if tab === 'weather'}
     <section class="panel">
       <h2>Weather</h2>
-      <p class="hint">Shows the current conditions in the pill. Isle only asks for the place you type here — it never guesses your location.</p>
+      <p class="hint">Shows the current conditions in the pill. The place is either the one you pick here or the device position Windows reports when you press <strong>Use my location</strong> — Isle never guesses.</p>
 
       <div class="row">
         <span class="row-label">Show Weather
@@ -670,17 +744,56 @@
         </button>
       </div>
 
-      <div class="row">
+      <div class="row wx-loc">
         <span class="row-label">Location
-          <span class="val">City or town, e.g. Mumbai, Reykjavík, New York</span>
+          <span class="val">
+            {#if wx.has_location}
+              {wx.place}{#if wx.lat != null && wx.lon != null}<span class="wx-coords">&nbsp;·&nbsp;{wx.lat.toFixed(3)}, {wx.lon.toFixed(3)}</span>{/if}
+            {:else}
+              Type a place, paste lat, lon, or use your current location
+            {/if}
+          </span>
         </span>
         <div class="wx-input">
-          <input type="text" bind:value={wxQuery} spellcheck="false" placeholder="Search a place…"
-                 onkeydown={(e) => e.key === 'Enter' && applyWeatherPlace()} />
+          <input
+            type="text"
+            bind:value={wxQuery}
+            spellcheck="false"
+            placeholder="Search a place…"
+            autocomplete="off"
+            role="combobox"
+            aria-expanded={wxSugOpen}
+            aria-controls="wx-suggest"
+            oninput={onWxInput}
+            onfocus={() => { if (wxSuggest.length) wxSugOpen = true; }}
+            onblur={() => setTimeout(() => { wxSugOpen = false; }, 150)}
+            onkeydown={(e) => e.key === 'Enter' && applyWeatherPlace()}
+          />
+          {#if wxSugOpen && wxSuggest.length}
+            <ul class="wx-suggest" id="wx-suggest" role="listbox">
+              {#each wxSuggest as p (p.label)}
+                <li role="option" aria-selected="false">
+                  <button type="button" onmousedown={(e) => e.preventDefault()} onclick={() => pickPlace(p)}>
+                    <span class="wx-sug-label">{p.label}</span>
+                    <span class="wx-sug-coord">{p.lat.toFixed(2)}, {p.lon.toFixed(2)}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
           <button class="btn-action" onclick={applyWeatherPlace} disabled={wxBusy}>
             {wxBusy ? '…' : 'Set'}
           </button>
         </div>
+      </div>
+
+      <div class="row">
+        <span class="row-label">Current location
+          <span class="val">Ask Windows for this device's position — the same service the Weather app uses.</span>
+        </span>
+        <button class="btn-action" onclick={useDeviceLocation} disabled={wxBusy}>
+          <Icon name="locate" size={14} /> Use my location
+        </button>
       </div>
 
       <div class="row">
@@ -704,9 +817,10 @@
 
       <div class="info-box">
         Data from Open-Meteo (open-meteo.com), which needs no account or key.
-        Nothing is sent until you press <strong>Set</strong>, and then only the
-        coordinates of the place you chose. Weather is the only request Isle makes
-        besides the latency ping — both are off by default.
+        Searching a name sends that name to Open-Meteo's geocoder; after that only
+        the resulting coordinates are sent. “Use my location” reads the position from
+        Windows locally, and sends just those coordinates. Weather is the only request
+        Isle makes besides the latency ping — both are off by default.
       </div>
     </section>
 
@@ -1003,7 +1117,42 @@
   }
 
   /* -- Weather -- */
-  .wx-input { display: flex; align-items: center; gap: 8px; }
+  .wx-loc { position: relative; }
+  .wx-input { display: flex; align-items: center; gap: 8px; position: relative; }
+  /* candidate list: appears under the input, above the row */
+  .wx-suggest {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 20;
+    width: 320px;
+    max-height: 236px;
+    overflow-y: auto;
+    list-style: none;
+    background: #14141a;
+    border: 1px solid #2a2a32;
+    border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .55);
+    padding: 4px;
+    scrollbar-width: thin;
+  }
+  .wx-suggest button {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 7px;
+    background: none;
+    color: #e8e8ea;
+    cursor: pointer;
+    text-align: left;
+  }
+  .wx-suggest button:hover, .wx-suggest button:focus-visible { background: #22222c; }
+  .wx-sug-label { font-size: 13px; }
+  .wx-sug-coord { font-size: 11px; color: #6f6f7a; font-variant-numeric: tabular-nums; }
   .wx-input input[type=text] {
     background: #18181e;
     border: 1px solid #2a2a32;
@@ -1016,6 +1165,7 @@
   }
   .wx-input input[type=text]:focus { outline: none; border-color: #7c6af7; }
   .wx-msg { margin-top: 14px; margin-bottom: 0; color: #9a8ffb; }
+  .wx-coords { color: #4f4f59; font-variant-numeric: tabular-nums; }
   .btn-action { display: inline-flex; align-items: center; gap: 6px; justify-content: center; }
   .btn-action:disabled, .toggle:disabled { opacity: .45; cursor: not-allowed; }
   .btn-action:disabled:hover { background: #252530; color: #ccc; }

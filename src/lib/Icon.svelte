@@ -24,6 +24,7 @@
     play: '<path d="M7 4.5v15l13-7.5z" fill="currentColor"/>',
     pause: '<path d="M7 5v14M17 5v14" stroke-width="3.2"/>',
     pin: '<path d="M12 17v5M8 3h8l-1 7 3 4H6l3-4z"/>',
+    locate: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
     open: '<path d="M6 9l6 6 6-6"/>',

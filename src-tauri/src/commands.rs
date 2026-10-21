@@ -518,12 +518,6 @@ pub fn reload_logger(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Check if clipboard module is enabled
-#[tauri::command]
-pub fn clipboard_enabled_get() -> bool {
-    clipboard::is_enabled()
-}
-
 /// Enable or disable clipboard module
 #[tauri::command]
 pub fn clipboard_enabled_set(enabled: bool) -> Result<(), String> {

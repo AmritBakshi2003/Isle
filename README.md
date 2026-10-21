@@ -26,7 +26,7 @@ springs open and closed.
 
 ### For Users (Download Installer)
 1. Download the latest NSIS installer from the [Releases](https://github.com/AmritBakshi2003/Isle/releases) page
-2. Run `Isle_0.3.0_x64-setup.exe` (or latest version)
+2. Run `Isle_0.3.1_x64-setup.exe` (or latest version)
 3. Press `Ctrl+Alt+Space` to show the pill
 4. Click to expand and access all features
 
@@ -45,6 +45,32 @@ springs open and closed.
 - **Settings**: Click the Settings tab in the expanded island
 
 ## Changelog
+
+### v0.3.1
+**Performance**
+- Idle cost, measured on Windows 11 with the island collapsed: the whole process tree used to sit at ~11 % of a
+  core (WebView2's GPU process alone ~7.8 %) and ~561 MB of working set. The equaliser and charging bolt were
+  infinite CSS animations, so the compositor never stopped; they now run a few cycles and hold a static frame.
+- The Settings window is created the first time you open it and destroyed when you close it, instead of being
+  pre-created hidden at startup. That removes a permanent WebView2 renderer (tens of MB) for users who never
+  open Settings.
+- Watcher threads no longer read SQLite on every tick: the idle watcher compares cached atomics (and wakes every
+  15 s when auto-hide is off), the installer watcher checks its setting before querying the service manager, and
+  the BITS watcher backs off to a minute when nothing is copying.
+- Dropped two commands nothing called (`clipboard_enabled_get`, `update_hide_settings`).
+
+**Calendar**
+- The week strip is a real horizontal scroller: sweep a trackpad (or use the wheel, or the chevrons) to move
+  between weeks. The scrollbar is hidden, swipes snap to whole weeks, and the strip recentres itself so it pages
+  forever without growing the DOM.
+
+**Weather**
+- **Use my location**: reads the device position from the Windows location service (the same source as the
+  Windows Weather app). Only the resulting coordinates go to Open-Meteo — nothing else, and only after you ask.
+- Searching now shows candidates instead of silently taking the first hit, so "Springfield" or "Mumbai" can be
+  disambiguated; results are cached in memory, the list is debounced, and a picked candidate saves the exact
+  coordinates shown.
+- Pasted coordinates (`19.07, 72.88`) are accepted directly — no geocoding request at all.
 
 ### v0.3.0
 **Pill**

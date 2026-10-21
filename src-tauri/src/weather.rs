@@ -16,9 +16,18 @@
 
 use crate::db::{e2s, now, Db};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Condvar, LazyLock, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+
+/// One geocoding candidate, exactly as the Settings picker shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Place {
+    pub label: String,
+    pub lat: f64,
+    pub lon: f64,
+}
 
 /// One current-conditions snapshot.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -143,30 +152,64 @@ pub fn parse_current(body: &str) -> Result<(f64, f64, i32, f64, i32), String> {
     ))
 }
 
-/// Pure: first geocoding hit -> (label, lat, lon).
-pub fn parse_place(body: &str) -> Result<(String, f64, f64), String> {
+/// Pure: every candidate in a geocoding response -> places (duplicates removed).
+pub fn parse_places(body: &str) -> Result<Vec<Place>, String> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| format!("Location search failed: {e}"))?;
-    let hit = v
-        .get("results")
-        .and_then(|r| r.get(0))
-        .ok_or_else(|| "No place matched that name".to_string())?;
-    let name = hit.get("name").and_then(|x| x.as_str()).unwrap_or("").trim();
-    if name.is_empty() {
+    let Some(results) = v.get("results").and_then(|r| r.as_array()) else {
         return Err("No place matched that name".to_string());
-    }
-    let mut label = name.to_string();
-    for key in ["admin1", "country"] {
-        if let Some(part) = hit.get(key).and_then(|x| x.as_str()) {
-            if !part.is_empty() && !label.contains(part) {
-                label.push_str(", ");
-                label.push_str(part);
+    };
+
+    let mut out: Vec<Place> = Vec::new();
+    for hit in results {
+        let name = hit.get("name").and_then(|x| x.as_str()).unwrap_or("").trim();
+        let (Some(lat), Some(lon)) = (
+            hit.get("latitude").and_then(|x| x.as_f64()),
+            hit.get("longitude").and_then(|x| x.as_f64()),
+        ) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let mut label = name.to_string();
+        for key in ["admin1", "country"] {
+            if let Some(part) = hit.get(key).and_then(|x| x.as_str()) {
+                if !part.is_empty() && !label.contains(part) {
+                    label.push_str(", ");
+                    label.push_str(part);
+                }
             }
         }
+        // "Springfield" exists in a dozen states: keep one row per label.
+        if !out.iter().any(|p| p.label == label) {
+            out.push(Place { label, lat, lon });
+        }
     }
-    let lat = hit.get("latitude").and_then(|x| x.as_f64()).ok_or("Place had no latitude")?;
-    let lon = hit.get("longitude").and_then(|x| x.as_f64()).ok_or("Place had no longitude")?;
-    Ok((label, lat, lon))
+
+    if out.is_empty() {
+        Err("No place matched that name".to_string())
+    } else {
+        Ok(out)
+    }
+}
+
+/// Pure: "19.07, 72.88" (or "19.07 72.88") -> coordinates, else None.
+///
+/// Lets a user paste coordinates from any source — no geocoding request at all,
+/// and no guessing when two places share a name.
+pub fn parse_coords(q: &str) -> Option<(f64, f64)> {
+    let cleaned = q.replace(',', " ");
+    let parts: Vec<&str> = cleaned.split_whitespace().collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let lat: f64 = parts[0].parse().ok()?;
+    let lon: f64 = parts[1].parse().ok()?;
+    if !lat.is_finite() || !lon.is_finite() || lat.abs() > 90.0 || lon.abs() > 180.0 {
+        return None;
+    }
+    Some((lat, lon))
 }
 
 /// Percent-encode a query string value (RFC 3986 unreserved set only).
@@ -182,17 +225,73 @@ pub fn encode_query(s: &str) -> String {
     out
 }
 
-/// Resolve a typed place name to coordinates. Blocking (one HTTPS call).
-pub fn geocode(query: &str) -> Result<(String, f64, f64), String> {
+/// In-memory geocoding cache: typing "Mum → Mumb → Mumbai" is one request, and
+/// reopening the picker is free. Bounded, so it can never grow without limit.
+const SEARCH_CACHE_MAX: usize = 32;
+static SEARCH_CACHE: LazyLock<Mutex<HashMap<String, Vec<Place>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Search for candidates (label + coordinates). Blocking (one HTTPS call unless cached).
+pub fn search_places(query: &str) -> Result<Vec<Place>, String> {
     let q = query.trim();
     if q.is_empty() {
-        return Err("Type a city or town".to_string());
+        return Err("Type a place name".to_string());
     }
+
+    let key = q.to_lowercase();
+    if let Ok(cache) = SEARCH_CACHE.lock() {
+        if let Some(hit) = cache.get(&key) {
+            return Ok(hit.clone());
+        }
+    }
+
     let url = format!(
-        "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=en&format=json",
+        "https://geocoding-api.open-meteo.com/v1/search?name={}&count=8&language=en&format=json",
         encode_query(q)
     );
-    parse_place(&fetch(&url)?)
+    let places = parse_places(&fetch(&url)?)?;
+
+    if let Ok(mut cache) = SEARCH_CACHE.lock() {
+        if cache.len() >= SEARCH_CACHE_MAX {
+            cache.clear();
+        }
+        cache.insert(key, places.clone());
+    }
+    Ok(places)
+}
+
+/// Resolve a typed place name to coordinates (best hit). Blocking.
+pub fn geocode(query: &str) -> Result<(String, f64, f64), String> {
+    let places = search_places(query)?;
+    let first = places
+        .into_iter()
+        .next()
+        .ok_or_else(|| "No place matched that name".to_string())?;
+    Ok((first.label, first.lat, first.lon))
+}
+
+/// The Windows location service — the same source the Windows Weather app uses.
+/// Nothing leaves the machine here: only the resulting coordinates are ever sent
+/// to Open-Meteo, exactly like a typed place.
+pub fn device_location() -> Result<(f64, f64), String> {
+    #[cfg(windows)]
+    {
+        geo::position()
+    }
+    #[cfg(not(windows))]
+    {
+        Err("Device location needs Windows".to_string())
+    }
+}
+
+/// Persist a resolved location. Coordinates are stored exactly as resolved, so
+/// the forecast is for the place the user saw (no second, possibly different hit).
+fn save_location(db: &Db, place: &str, lat: f64, lon: f64) -> Result<(), String> {
+    db.set_setting("weather_place", place)?;
+    db.set_setting("weather_lat", &format!("{lat:.5}"))?;
+    db.set_setting("weather_lon", &format!("{lon:.5}"))?;
+    db.set_setting("weather_enabled", "true")?;
+    Ok(())
 }
 
 /// One HTTPS GET through WinRT. Runs on the caller's thread (COM must be MTA).
@@ -246,12 +345,61 @@ pub fn weather_get(db: tauri::State<Db>) -> Weather {
 
 #[tauri::command]
 pub fn weather_settings_get(db: tauri::State<Db>) -> serde_json::Value {
+    let lat = db.setting("weather_lat").and_then(|s| s.trim().parse::<f64>().ok());
+    let lon = db.setting("weather_lon").and_then(|s| s.trim().parse::<f64>().ok());
     serde_json::json!({
         "enabled": is_enabled(&db),
         "place": db.setting("weather_place").unwrap_or_default(),
         "units": db.setting("weather_units").unwrap_or_else(|| "c".to_string()),
         "has_location": coords(&db).is_some(),
+        "lat": lat,
+        "lon": lon,
     })
+}
+
+/// Search without committing: every candidate comes back so the user picks.
+/// Cached in memory, so "Mum" -> "Mumb" -> "Mumbai" is a single request.
+#[tauri::command]
+pub async fn weather_place_search(query: String) -> Result<Vec<Place>, String> {
+    tauri::async_runtime::spawn_blocking(move || search_places(&query))
+        .await
+        .map_err(e2s)?
+}
+
+/// Save a candidate exactly as shown (no re-geocoding, so the coordinates the
+/// user picked are the coordinates the forecast uses).
+#[tauri::command]
+pub async fn weather_location_pick(
+    app: AppHandle,
+    db: tauri::State<'_, Db>,
+    place: String,
+    lat: f64,
+    lon: f64,
+) -> Result<Weather, String> {
+    let label = place.trim();
+    if label.is_empty() || !lat.is_finite() || !lon.is_finite() {
+        return Err("Pick a place from the list".to_string());
+    }
+    save_location(&db, label, lat, lon)?;
+    let w = refresh(&db);
+    let _ = app.emit("weather://update", w.clone());
+    Ok(w)
+}
+
+/// Ask Windows for the device position (Settings -> Privacy -> Location must
+/// allow desktop apps). Same service the Windows Weather app uses.
+#[tauri::command]
+pub async fn weather_use_device_location(
+    app: AppHandle,
+    db: tauri::State<'_, Db>,
+) -> Result<Weather, String> {
+    let (lat, lon) = tauri::async_runtime::spawn_blocking(device_location)
+        .await
+        .map_err(e2s)??;
+    save_location(&db, "Current location", lat, lon)?;
+    let w = refresh(&db);
+    let _ = app.emit("weather://update", w.clone());
+    Ok(w)
 }
 
 #[tauri::command]
@@ -270,6 +418,8 @@ pub fn weather_units_set(db: tauri::State<Db>, units: String) -> Result<(), Stri
 }
 
 /// Look the place up, remember it, fetch immediately and tell the UI.
+/// Accepts a typed name *or* pasted coordinates ("19.07, 72.88"), in which case
+/// no geocoding request is made at all.
 #[tauri::command]
 pub async fn weather_location_set(
     app: AppHandle,
@@ -277,13 +427,14 @@ pub async fn weather_location_set(
     query: String,
 ) -> Result<Weather, String> {
     let q = query.clone();
-    let (place, lat, lon) =
-        tauri::async_runtime::spawn_blocking(move || geocode(&q)).await.map_err(e2s)??;
+    let (place, lat, lon) = match parse_coords(&q) {
+        Some((lat, lon)) => (format!("{lat:.3}, {lon:.3}"), lat, lon),
+        None => tauri::async_runtime::spawn_blocking(move || geocode(&q))
+            .await
+            .map_err(e2s)??,
+    };
 
-    db.set_setting("weather_place", &place)?;
-    db.set_setting("weather_lat", &format!("{lat:.5}"))?;
-    db.set_setting("weather_lon", &format!("{lon:.5}"))?;
-    db.set_setting("weather_enabled", "true")?;
+    save_location(&db, &place, lat, lon)?;
 
     let w = refresh(&db);
     let _ = app.emit("weather://update", w.clone());
@@ -302,6 +453,48 @@ pub async fn weather_refresh(
     let w = refresh(&db);
     let _ = app.emit("weather://update", w.clone());
     Ok(w)
+}
+
+/// WinRT `Windows.Devices.Geolocation` — the native location source. Runs on a
+/// blocking thread with an MTA apartment (like media.rs), so no message pump and
+/// no extra crate are needed.
+#[cfg(windows)]
+mod geo {
+    use windows::Devices::Geolocation::{GeolocationAccessStatus, Geolocator};
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+
+    pub fn position() -> Result<(f64, f64), String> {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
+
+        let locator = Geolocator::new()
+            .map_err(|e| format!("Windows location is unavailable: {}", e.message()))?;
+
+        // RequestAccessAsync is a static member of the WinRT type.
+        let access = Geolocator::RequestAccessAsync()
+            .and_then(|op| op.get())
+            .map_err(|e| format!("Windows location is unavailable: {}", e.message()))?;
+
+        if access != GeolocationAccessStatus::Allowed {
+            return Err("Location access is off. Turn on Windows Settings → Privacy & security → ".to_string()
+                + "Location, then enable \"Let desktop apps access your location\".");
+        }
+
+        let pos = locator
+            .GetGeopositionAsync()
+            .and_then(|op| op.get())
+            .map_err(|e| format!("Windows could not get a position: {}", e.message()))?;
+
+        let coord = pos.Coordinate().map_err(|e| e.message().to_string())?;
+        let point = coord.Point().map_err(|e| e.message().to_string())?;
+        let p = point.Position().map_err(|e| e.message().to_string())?;
+
+        if !p.Latitude.is_finite() || !p.Longitude.is_finite() {
+            return Err("Windows returned no position".to_string());
+        }
+        Ok((p.Latitude, p.Longitude))
+    }
 }
 
 #[cfg(windows)]
@@ -446,16 +639,42 @@ mod tests {
     fn geocode_picks_the_first_hit_and_labels_it() {
         let body = r#"{"results":[{"name":"Mumbai","latitude":19.07,"longitude":72.88,
             "country":"India","admin1":"Maharashtra"}]}"#;
-        let (label, lat, lon) = parse_place(body).unwrap();
-        assert_eq!(label, "Mumbai, Maharashtra, India");
-        assert!((lat - 19.07).abs() < 0.001);
-        assert!((lon - 72.88).abs() < 0.001);
+        let places = parse_places(body).unwrap();
+        assert_eq!(places[0].label, "Mumbai, Maharashtra, India");
+        assert!((places[0].lat - 19.07).abs() < 0.001);
+        assert!((places[0].lon - 72.88).abs() < 0.001);
     }
 
     #[test]
     fn no_results_is_a_readable_error() {
-        let err = parse_place(r#"{"generationtime_ms":0.1}"#).unwrap_err();
+        let err = parse_places(r#"{"generationtime_ms":0.1}"#).unwrap_err();
         assert!(err.contains("No place"), "{err}");
+    }
+
+    #[test]
+    fn search_returns_every_candidate_not_just_the_first() {
+        let body = r#"{"results":[
+            {"name":"Springfield","latitude":39.8,"longitude":-89.65,
+             "admin1":"Illinois","country":"United States"},
+            {"name":"Springfield","latitude":37.2,"longitude":-93.29,
+             "admin1":"Missouri","country":"United States"},
+            {"name":"Springfield","latitude":39.8,"longitude":-89.65,
+             "admin1":"Illinois","country":"United States"}
+        ]}"#;
+        let places = parse_places(body).unwrap();
+        assert_eq!(places.len(), 2, "duplicate labels collapse to one row");
+        assert_eq!(places[0].label, "Springfield, Illinois, United States");
+        assert_eq!(places[1].label, "Springfield, Missouri, United States");
+    }
+
+    #[test]
+    fn coordinates_can_be_pasted_instead_of_a_name() {
+        assert_eq!(parse_coords("19.07, 72.88"), Some((19.07, 72.88)));
+        assert_eq!(parse_coords(" 19.07 72.88 "), Some((19.07, 72.88)));
+        assert_eq!(parse_coords("-33.9,151.2"), Some((-33.9, 151.2)));
+        assert_eq!(parse_coords("Mumbai"), None);
+        assert_eq!(parse_coords("120, 200"), None, "out of range");
+        assert_eq!(parse_coords(""), None);
     }
 
     #[test]

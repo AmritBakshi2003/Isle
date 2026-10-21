@@ -24,10 +24,6 @@ pub fn set_enabled(enabled: bool) {
     imp::set_enabled(enabled)
 }
 
-pub fn is_enabled() -> bool {
-    imp::is_enabled()
-}
-
 #[cfg(windows)]
 mod imp {
     use crate::db::{now, Db};
@@ -65,10 +61,6 @@ mod imp {
                 eprintln!("[isle] Clipboard listener error: {}", e);
             }
         });
-    }
-
-    pub fn is_enabled() -> bool {
-        CLIPBOARD_ENABLED.load(Ordering::Relaxed)
     }
 
     pub fn set_enabled(enabled: bool) {

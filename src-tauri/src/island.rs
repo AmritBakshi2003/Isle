@@ -80,17 +80,40 @@ pub fn island_resize(app: AppHandle, expanded: bool) {
     resize(&app, expanded);
 }
 
-// ── settings window (pre-created in tauri.conf.json, hidden by default) ─────
-// The window is created at startup alongside the main pill but starts hidden.
-// Close events are intercepted to hide instead of destroy, so it can be reopened.
+// ── settings window (created on demand, destroyed on close) ─────────────────
+// MEMORY: a WebView2 window costs a whole renderer process (~40-90 MB private).
+// Pre-creating Settings at startup kept that renderer alive for the entire
+// session even if the window was never opened, so it is now built the first
+// time it is asked for and destroyed again when the user closes it (see
+// lib.rs on_window_event). Reopening it costs a few hundred ms, not memory.
 
-/// Show the settings window. The window is pre-created in tauri.conf.json but hidden.
+/// Show the settings window, creating it the first time.
 pub fn show_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.show();
+        let _ = w.unminimize();
         let _ = w.set_focus();
-    } else {
-        eprintln!("[isle] settings window not found in config");
+        return;
+    }
+
+    let built = tauri::WebviewWindowBuilder::new(
+        app,
+        "settings",
+        tauri::WebviewUrl::App("settings.html".into()),
+    )
+    .title("Isle Settings")
+    .inner_size(720.0, 680.0)
+    .min_inner_size(640.0, 560.0)
+    .resizable(true)
+    .center()
+    .build();
+
+    match built {
+        Ok(w) => {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+        Err(e) => eprintln!("[isle] could not open settings: {e}"),
     }
 }
 

@@ -666,7 +666,11 @@
   .art   { width: 24px; height: 24px; border-radius: 50%; background: var(--row-hi) center/cover; flex-shrink: 0; }
 
   .eq { display: flex; align-items: flex-end; gap: 3px; height: 14px; flex-shrink: 0; }
-  .eq i { width: 3px; height: 14px; border-radius: 2px; background: var(--accent); transform-origin: bottom; animation: eq 0.9s ease-in-out infinite; }
+  /* The bars settle after three cycles instead of looping forever: an infinite
+     transform animation on a transparent always-on-top window keeps WebView2's
+     GPU process compositing non-stop (measured ~7.8 % of a core while idle).
+     Three cycles is enough to read as "playing", then it holds a static shape. */
+  .eq i { width: 3px; height: 14px; border-radius: 2px; background: var(--accent); transform-origin: bottom; animation: eq 0.9s ease-in-out 3; }
   .eq i:nth-child(2) { animation-delay: -.3s; } .eq i:nth-child(3) { animation-delay: -.6s; }
   @keyframes eq { 0%, 100% { transform: scaleY(.25); } 50% { transform: scaleY(1); } }
 
@@ -674,7 +678,8 @@
      The bolt element is added/removed by Svelte reactivity; CSS handles the animation. */
   .bolt {
     font-size: 12px; line-height: 1; flex-shrink: 0; margin-left: 4px;
-    animation: pulse-bolt 1.6s ease-in-out infinite;
+    /* finite, like the equaliser: no permanent compositor work on the pill */
+    animation: pulse-bolt 1.6s ease-in-out 2;
   }
   @keyframes pulse-bolt {
     0%, 100% { opacity: .65; transform: scale(1);    }

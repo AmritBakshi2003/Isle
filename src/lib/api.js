@@ -219,6 +219,30 @@ function mockWeather() {
     temp_c: W.cache.temp_c, feels_c: W.cache.feels_c, humidity: W.cache.humidity,
     wind_kph: W.cache.wind_kph, code: W.cache.code, error: null };
 }
+/** Same shape as weather::Place on the Rust side. */
+const MOCK_PLACES = [
+  ['Bengaluru', 'Karnataka', 'India', 12.97, 77.59],
+  ['Mumbai', 'Maharashtra', 'India', 19.07, 72.87],
+  ['Mumbai', 'Sindh', 'Pakistan', 24.87, 67.04],
+  ['New York', 'New York', 'United States', 40.71, -74.0],
+  ['Reykjavík', 'Capital Region', 'Iceland', 64.14, -21.94],
+];
+const mockSearch = (query) => {
+  const t = String(query || '').trim().toLowerCase();
+  if (t.length < 2) return [];
+  return MOCK_PLACES
+    .filter(([n, a, c]) => `${n} ${a} ${c}`.toLowerCase().includes(t))
+    .map(([n, a, c, lat, lon]) => ({ label: `${n}, ${a}, ${c}`, lat, lon }));
+};
+const saveMockLocation = (place, lat, lon) => {
+  D.settings.weather_place = place;
+  D.settings.weather_enabled = 'true';
+  W.lat = lat; W.lon = lon; W.cache = null;
+  const w = mockWeather();
+  emit('weather://update', w);
+  return w;
+};
+
 const setMockPlace = (query) => {
   const name = String(query || '').trim();
   if (!name) throw new Error('Type a city or town');
@@ -377,6 +401,8 @@ function mock(cmd, a) {
       place: D.settings.weather_place || '',
       units: D.settings.weather_units === 'f' ? 'f' : 'c',
       has_location: W.lat !== null,
+      lat: W.lat,
+      lon: W.lon,
     };
     case 'weather_enabled_set':
       D.settings.weather_enabled = a.enabled ? 'true' : 'false';
@@ -387,6 +413,9 @@ function mock(cmd, a) {
       emit('weather://update', mockWeather());
       return;
     case 'weather_location_set': return setMockPlace(a.query);
+    case 'weather_place_search': return mockSearch(a.query);
+    case 'weather_location_pick': return saveMockLocation(a.place, a.lat, a.lon);
+    case 'weather_use_device_location': return saveMockLocation('Current location', 12.97, 77.59);
     case 'weather_refresh':
       W.cache = null;
       emit('weather://update', mockWeather());

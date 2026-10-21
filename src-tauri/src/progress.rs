@@ -151,7 +151,10 @@ fn start_bits_watcher(app: AppHandle, tx: SyncSender<Msg>) {
                         let _ = tx.try_send(Msg::Clear);
                         was_active = false;
                     }
-                    std::thread::sleep(Duration::from_secs(15));
+                    // Nothing copying: a COM round-trip every 15 s was showing up
+                    // as a permanent wake-up. A minute is plenty to notice a new
+                    // job (the first active poll reports it immediately).
+                    std::thread::sleep(Duration::from_secs(60));
                 }
             }
         }
@@ -217,21 +220,21 @@ fn start_install_watcher(app: AppHandle, tx: SyncSender<Msg>) {
 
         loop {
             std::thread::sleep(Duration::from_secs(3));
-            if !msiserver_running() { continue; }
 
-            // Check if install progress is enabled
+            // Read the setting BEFORE touching the service manager: with install
+            // reporting off we should not be querying the SCM every 3 seconds for
+            // the whole session. (msiserver is idle almost all of the time.)
             let enabled = app.try_state::<crate::db::Db>()
                 .and_then(|db| db.setting("progress_app_install"))
                 .map(|s| s == "true")
                 .unwrap_or(true);
 
             if !enabled {
-                // Still need to wait for msiserver to stop to avoid rapid polling
-                while msiserver_running() {
-                    std::thread::sleep(Duration::from_secs(2));
-                }
+                std::thread::sleep(Duration::from_secs(27));
                 continue;
             }
+
+            if !msiserver_running() { continue; }
 
             let _ = tx.try_send(Msg::Progress { value: 20, label: "Installing...".into() });
 

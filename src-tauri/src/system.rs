@@ -4,7 +4,7 @@
 
 use tauri::{AppHandle, Emitter, State, Manager};
 use std::time::Duration;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use crate::db::Db;
 
@@ -26,10 +26,14 @@ pub struct SystemState {
     pub is_fullscreen: Arc<AtomicBool>,
     pub is_battery_saver: Arc<AtomicBool>,
     pub should_hide: Arc<AtomicBool>,
-    // Cached settings for hide conditions
+    // Cached settings for hide conditions. Reading these atomics instead of the
+    // settings table keeps the watcher threads off SQLite (and off the Db mutex)
+    // on every tick.
     pub hide_fullscreen: Arc<AtomicBool>,
     pub hide_battery_saver: Arc<AtomicBool>,
     pub auto_hide: Arc<AtomicBool>,
+    /// idle threshold in seconds while auto_hide is on
+    pub auto_hide_secs: Arc<AtomicU32>,
 }
 
 impl SystemState {
@@ -41,6 +45,7 @@ impl SystemState {
             hide_fullscreen: Arc::new(AtomicBool::new(false)),
             hide_battery_saver: Arc::new(AtomicBool::new(false)),
             auto_hide: Arc::new(AtomicBool::new(false)),
+            auto_hide_secs: Arc::new(AtomicU32::new(30)),
         }
     }
 }
@@ -170,21 +175,15 @@ fn detect_battery_saver() -> bool {
 
 #[cfg(target_os = "windows")]
 fn start_idle_watcher(app: AppHandle, state: SystemState) {
+    // COST: this used to read two settings (two SQLite queries through the Db
+    // mutex) every single second, awake or not. The values are now cached in
+    // atomics by update_cached_settings(), so an idle, auto-hide-off machine
+    // does one atomic load every 15 s instead of 2 queries + 1 wake per second.
     std::thread::spawn(move || {
         loop {
-            // Check if auto_hide is enabled
-            let db_handle = app.state::<Db>();
-            let auto_hide_enabled = db_handle.setting("auto_hide")
-                .map(|v| v == "true")
-                .unwrap_or(false);
+            if state.auto_hide.load(Ordering::Relaxed) {
+                let idle_threshold = state.auto_hide_secs.load(Ordering::Relaxed);
 
-            if auto_hide_enabled {
-                // Get idle threshold from DB
-                let idle_threshold = db_handle.setting("auto_hide_time")
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(30);
-
-                // Check idle time using GetLastInputInfo
                 unsafe {
                     let mut last_input = LASTINPUTINFO {
                         cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
@@ -192,10 +191,12 @@ fn start_idle_watcher(app: AppHandle, state: SystemState) {
                     };
 
                     if GetLastInputInfo(&mut last_input).as_bool() {
-                        let idle_ms = get_tick_count() - last_input.dwTime;
+                        let idle_ms = get_tick_count().wrapping_sub(last_input.dwTime);
                         let idle_seconds = idle_ms / 1000;
 
                         let was_should_hide = state.should_hide.load(Ordering::Relaxed);
+                        // hysteresis: hide only once past the threshold, and do
+                        // not flap right at the boundary
                         let should_hide = idle_seconds > idle_threshold;
 
                         if should_hide != was_should_hide {
@@ -204,9 +205,12 @@ fn start_idle_watcher(app: AppHandle, state: SystemState) {
                         }
                     }
                 }
+                std::thread::sleep(Duration::from_secs(5));
+            } else {
+                // nothing to watch: wake rarely, just enough to notice the
+                // setting being switched on (the setter also updates the flag)
+                std::thread::sleep(Duration::from_secs(15));
             }
-
-            std::thread::sleep(Duration::from_secs(1));
         }
     });
 }
@@ -237,18 +241,6 @@ fn check_hide_condition(state: &SystemState, app: &AppHandle) {
     let _ = app.emit("system://hide", should_hide);
 }
 
-/// Update cached hide settings from DB and recompute hide condition
-#[tauri::command]
-pub fn update_hide_settings(app: AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(state) = app.try_state::<SystemState>() {
-            update_cached_settings(&state, &app);
-        }
-    }
-    Ok(())
-}
-
 #[cfg(target_os = "windows")]
 fn update_cached_settings(state: &SystemState, app: &AppHandle) {
     let db = app.state::<Db>();
@@ -262,9 +254,14 @@ fn update_cached_settings(state: &SystemState, app: &AppHandle) {
         .map(|v| v == "true")
         .unwrap_or(false);
 
+    let auto_hide_secs = db.setting("auto_hide_time")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(30);
+
     state.hide_fullscreen.store(hide_fullscreen, Ordering::Relaxed);
     state.hide_battery_saver.store(hide_battery_saver, Ordering::Relaxed);
     state.auto_hide.store(auto_hide, Ordering::Relaxed);
+    state.auto_hide_secs.store(auto_hide_secs, Ordering::Relaxed);
 
     check_hide_condition(state, app);
 }
@@ -300,8 +297,13 @@ pub fn auto_hide_time_get(db: State<Db>) -> u32 {
 
 /// Set auto-hide idle time in seconds
 #[tauri::command]
-pub fn auto_hide_time_set(db: State<Db>, seconds: u32) -> Result<(), String> {
-    db.set_setting("auto_hide_time", &seconds.to_string())
+pub fn auto_hide_time_set(db: State<Db>, app: AppHandle, seconds: u32) -> Result<(), String> {
+    db.set_setting("auto_hide_time", &seconds.to_string())?;
+    #[cfg(target_os = "windows")]
+    if let Some(state) = app.try_state::<SystemState>() {
+        state.auto_hide_secs.store(seconds.max(5), Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 /// Check if hide on fullscreen is enabled

@@ -168,10 +168,17 @@ pub fn run() {
 
             Ok(())
         })
-        // Close → hide for both windows (both live permanently in background).
+        // Close behaviour differs by window.
+        //   main     : hide instead of closing (it lives in the tray for the session)
+        //   settings : really close, so its WebView2 renderer is released. It is
+        //              rebuilt on the next "Settings" click (island::show_settings),
+        //              which keeps a never-used settings renderer from holding tens
+        //              of MB for the whole session.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Both main pill and settings window: hide instead of closing
+                if window.label() == "settings" {
+                    return; // allow the close → window is destroyed
+                }
                 window.hide().unwrap_or(());
                 api.prevent_close();
             }
@@ -220,10 +227,8 @@ pub fn run() {
             system::hide_fullscreen_set,
             system::hide_battery_saver_get,
             system::hide_battery_saver_set,
-            system::update_hide_settings,
             commands::reregister_hotkeys,
             commands::reload_logger,
-            commands::clipboard_enabled_get,
             commands::clipboard_enabled_set,
             commands::open_native,
             commands::enumerate_apps,
@@ -250,6 +255,9 @@ pub fn run() {
             weather::weather_enabled_set,
             weather::weather_units_set,
             weather::weather_location_set,
+            weather::weather_place_search,
+            weather::weather_location_pick,
+            weather::weather_use_device_location,
             weather::weather_refresh,
             procs::procs_set,
             procs::procs_snapshot,
