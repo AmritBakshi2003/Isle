@@ -21,9 +21,14 @@ mod icon;
 mod island;
 mod logger;
 mod media;
+mod procs;
 mod progress;
 mod scheduler;
 mod system;
+mod network;
+mod topmost;
+mod weather;
+mod wellbeing;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -68,6 +73,10 @@ pub fn run() {
             app.manage(scheduler::start(handle.clone()));
             media::start(handle.clone());
             clipboard::start(handle.clone());
+            network::start(handle.clone());   // parked until the Workspace tab mounts
+            wellbeing::start(handle.clone()); // event-driven foreground log
+            procs::start(handle.clone());     // per-app CPU/RAM/GPU, parked until asked
+            weather::start(handle.clone());   // opt-in: wakes every 30 min, no-op while off
             app.manage(progress::start(handle.clone())); // single-channel progress manager
 
 
@@ -79,6 +88,12 @@ pub fn run() {
                     .map(|v| v == "true")
                     .unwrap_or(true);
                 clipboard::set_enabled(clipboard_enabled);
+            }
+            // Wellbeing logging follows its setting (default: on)
+            {
+                let db = app.state::<db::Db>();
+                let wb = db.setting("wellbeing_enabled").map(|v| v == "true").unwrap_or(true);
+                wellbeing::set_enabled(wb);
             }
 
             // 5. System state detection (fullscreen, battery saver, idle)
@@ -120,6 +135,11 @@ pub fn run() {
                 .tooltip("Isle — Dynamic Island for Windows")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
+                        // End the open wellbeing stretch so the log never keeps
+                        // counting after the app is gone.
+                        if let Some(db) = app.try_state::<db::Db>() {
+                            wellbeing::close_open_session(&db);
+                        }
                         // Actually quit - destroy both windows
                         if let Some(w) = app.get_webview_window("main") {
                             let _ = w.destroy();
@@ -179,16 +199,6 @@ pub fn run() {
             commands::clip_open_file,
             commands::clip_delete_file,
             commands::clip_paste_files,
-            commands::mode_list,
-            commands::mode_save,
-            commands::mode_delete,
-            commands::mode_activate,
-            commands::routine_list,
-            commands::routine_save,
-            commands::routine_toggle,
-            commands::routine_delete,
-            commands::routine_run,
-            commands::wallpaper_next,
             commands::setting_get,
             commands::setting_set,
             commands::settings_get_all,
@@ -226,6 +236,28 @@ pub fn run() {
             commands::regenerate_shortcut_icon,
             commands::reextract_old_icons,
             commands::extract_app_icon,
+            network::net_sampler_set,
+            network::net_snapshot,
+            network::net_settings_get,
+            network::net_settings_set,
+            wellbeing::wellbeing_enabled_get,
+            wellbeing::wellbeing_enabled_set,
+            wellbeing::wellbeing_today,
+            wellbeing::wellbeing_range,
+            wellbeing::wellbeing_clear,
+            weather::weather_get,
+            weather::weather_settings_get,
+            weather::weather_enabled_set,
+            weather::weather_units_set,
+            weather::weather_location_set,
+            weather::weather_refresh,
+            procs::procs_set,
+            procs::procs_snapshot,
+            topmost::topmost_list,
+            topmost::topmost_float,
+            topmost::topmost_release,
+            topmost::topmost_float_last,
+            topmost::topmost_release_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Isle");

@@ -1,24 +1,32 @@
 # Isle
 
 A lightweight, fully local "Dynamic Island" for Windows: music controls, clipboard history, tasks, calendar with
-reminders, one-tap modes, time-based routines and wallpaper rotation, in a pill that springs open and closed.
+reminders, a workspace dashboard (live network, digital wellbeing, keep-on-top window macros), in a pill that
+springs open and closed.
 
 ## Features
 
 - **Media Controls**: Control Spotify, YouTube, VLC, and any media app with album art display
 - **Clipboard History**: Automatic text capture with search, pin, and restore
 - **Tasks & Calendar**: Manage to-dos and events with reminder notifications
-- **Modes & Routines**: Create custom action presets and time-based automation
-- **Wallpaper Rotation**: Automatic cycling through your wallpaper folder
-- **Live Progress**: Monitor battery, downloads, and app installs with visual ring
+- **Workspace Dashboard**: Live network throughput and latency (LAN-only ping by default), a private log of the
+  apps you actually used today, and a running-apps monitor with per-app CPU / memory / GPU load that doubles as a
+  one-click "keep this window on top" macro list
+- **Live Progress**: Monitor battery, downloads, and app installs with a visual ring plus the exact percentage
+  in the pill ("Downloading… 42%")
 - **System Integration**: Fullscreen detection, battery saver awareness, idle auto-hide
-- **Privacy First**: 100% local data (SQLite), no telemetry, no network calls
+- **Weather chip**: current conditions and temperature in the pill for a place you pick, cached so it paints
+  instantly; sourced from Open-Meteo (no key, no account)
+- **Smooth motion**: pill drop-in, morphing panel, tab cross-fade, week strip that slides with the arrows, and
+  hidden scrollbars
+- **Privacy First**: 100% local data (SQLite), no telemetry. Two requests exist, both opt-in: the latency ping
+  (your own gateway unless you choose a public host) and the weather fetch for the place you set
 
 ## Quick Start
 
 ### For Users (Download Installer)
 1. Download the latest NSIS installer from the [Releases](https://github.com/AmritBakshi2003/Isle/releases) page
-2. Run `Isle_0.2.4_x64-setup.exe` (or latest version)
+2. Run `Isle_0.3.0_x64-setup.exe` (or latest version)
 3. Press `Ctrl+Alt+Space` to show the pill
 4. Click to expand and access all features
 
@@ -38,7 +46,45 @@ reminders, one-tap modes, time-based routines and wallpaper rotation, in a pill 
 
 ## Changelog
 
-### v2.1 (Current)
+### v0.3.0
+**Pill**
+- Progress labels now carry the exact percent ("Installing… 64%"), laid out on one line with the weather chip and
+  battery so nothing overlaps.
+- Optional weather chip (current temperature + WMO icon) for a place chosen in Settings → Weather. Cached in the
+  database and refreshed every 30 minutes; off by default.
+
+**Music**
+- Album art crossfades between tracks, title/artist rise in, the progress bar glides with a playhead, and the
+  play/pause glyph scales in.
+- If the "current" Windows media session is paused while another app is playing (e.g. YouTube in Chrome after
+  Spotify paused), Isle now follows the app that is actually playing.
+
+**Settings**
+- New Weather section (on/off, place lookup, °C/°F, refresh now) and a Workspace module toggle.
+- Media gained transport-control density; Modules now lists "Tasks & Calendar" and Workspace.
+
+**Workspace dashboard**
+- Network card: live throughput from `GetIfTable2`, ICMP latency, 48 s sparkline. The sampler is parked on a
+  condvar and only runs while the Workspace tab is open.
+- Digital wellbeing: an event-driven `SetWinEventHook` foreground log (no polling) with a per-app "today" view.
+- Keep on top: a `SetWindowPos(HWND_TOPMOST)` macro for the last non-Isle window, or any window you pick.
+- Resource monitor: one row per app with CPU (percent of the whole machine), working-set memory and GPU
+  utilization from the `GPU Engine` performance counters, sorted heaviest first.
+- Settings → Workspace: activity logging on/off, LAN vs public ping target, clear activity log.
+
+**Removed**
+- Modes, routines and wallpaper rotation: their UI was already gone, the backend, scheduler sections, action
+  runner and the `wallpaper` crate are now deleted. Existing database rows are preserved, not dropped.
+
+**Fixed**
+- Throughput maths was off by 10× (wrong tick base); covered by a unit test now.
+- The ICMP reply buffer was under-aligned, which is undefined behaviour; tests hit it as a hard abort.
+- The play/pause button no longer shows both glyphs at once (the outgoing icon's fade referenced an unimported
+  transition, so the old node was never removed); the swap is an enter-only CSS animation now.
+- The pill's weather chip now appears only alongside the clock — while music plays, only the album art and
+  equaliser are shown.
+
+### v2.1
 **Security & Reliability Improvements**
 - Added path/URL validation to prevent arbitrary file/URL launch
 - Implemented database corruption recovery with automatic backup
@@ -66,7 +112,7 @@ reminders, one-tap modes, time-based routines and wallpaper rotation, in a pill 
 
 **Build & Release**
 - Version standardized to 0.2.4 across Cargo.toml, tauri.conf.json, and package.json
-- All tests passing (23 Rust unit tests)
+- All tests passing (23 Rust unit tests at the time; 38 as of v0.3.0)
 - Frontend build with zero warnings
 
 ### v0.1.0
@@ -82,6 +128,8 @@ All data is stored locally in `%APPDATA%\app.isle.island\isle.db` (SQLite). No d
 ## Development
 
 **Preview UI without Rust**: `npm run dev` and open http://localhost:1420 (uses mock data)
+
+**Tests**: `cd src-tauri && cargo test` (includes real Win32 calls: interface table + loopback ICMP)
 
 **Architecture**: See **AGENTS.md** for detailed architecture, command contracts, and invariants.
 

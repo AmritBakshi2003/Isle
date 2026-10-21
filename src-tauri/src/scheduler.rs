@@ -12,8 +12,6 @@ use crate::{
     actions,
     db::{now, Db},
 };
-use chrono::{Datelike, Local};
-use serde_json::Value;
 use std::{
     sync::{
         mpsc::{channel, RecvTimeoutError, Sender},
@@ -26,8 +24,6 @@ use tauri::{AppHandle, Manager};
 // Constants for time-based operations
 const SAFETY_NET_SECONDS: i64 = 300; // 5 minutes - worst-case idle wake-up
 const REMINDER_WINDOW_SECONDS: i64 = 300; // 5 minutes - window after start to show notification
-const GRACE_PERIOD_SECONDS: i64 = 300; // 5 minutes - grace period for routine missed detection
-const TIME_ROUTINE_CHECK_SECONDS: i64 = 60; // 1 minute - check interval for time-triggered routines
 
 pub struct Scheduler(Mutex<Sender<()>>);
 
@@ -101,64 +97,6 @@ fn tick(app: &AppHandle, _is_startup: bool) -> Duration {
         })
     }) {
         next = next.min(t);
-    }
-
-    // 3) Time-triggered routines (checked once per minute, only if any exist).
-    let routines: Vec<(i64, String, i64, Value, Value)> = db
-        .with(|c| {
-            let mut s = c.prepare("SELECT id,name,last_run,trig,actions FROM routines WHERE enabled=1")?;
-            let rows = s.query_map([], |r| {
-                let (t, a): (String, String) = (r.get(3)?, r.get(4)?);
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    serde_json::from_str(&t).unwrap_or(Value::Null),
-                    serde_json::from_str(&a).unwrap_or(Value::Null),
-                ))
-            })?;
-            rows.collect()
-        })
-        .unwrap_or_default();
-    let local = Local::now();
-    let (hhmm, dow) = (local.format("%H:%M").to_string(), local.weekday().num_days_from_sunday() as i64);
-    let mut has_time_routine = false;
-    for (id, _name, last_run, trig, acts) in routines {
-        // Safe JSON indexing with .get()
-        let kind = trig.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-        if kind != "time" {
-            continue;
-        }
-        has_time_routine = true;
-        let days_ok = trig.get("days")
-            .and_then(|d| d.as_array())
-            .map(|d| d.is_empty() || d.iter().any(|x| x.as_i64() == Some(dow)))
-            .unwrap_or(true);
-        // Check if routine was missed (last_run > GRACE_PERIOD_SECONDS ago or in a different hour)
-        let missed = last_run < now - GRACE_PERIOD_SECONDS || last_run / 60 != now / 60;
-        let at_time = trig.get("at").and_then(|a| a.as_str()).unwrap_or("");
-        if at_time == hhmm && days_ok && missed {
-            let _ = db.with(|c| c.execute("UPDATE routines SET last_run=?1 WHERE id=?2", [now, id]));
-            let _ = actions::run(app, &acts);
-        }
-    }
-    if has_time_routine {
-        next = next.min(now + TIME_ROUTINE_CHECK_SECONDS - now % TIME_ROUTINE_CHECK_SECONDS);
-    }
-
-    // 4) Wallpaper rotation.
-    let interval = db.setting("wallpaper_interval").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-    if interval > 0 {
-        let last = db.setting("wallpaper_last").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-        let mut due_at = last + interval * 60;
-        if now >= due_at {
-            if actions::wallpaper_next(app).is_err() {
-                // e.g. no folder set: back off instead of retrying every tick.
-                let _ = db.set_setting("wallpaper_last", &now.to_string());
-            }
-            due_at = now + interval * 60;
-        }
-        next = next.min(due_at);
     }
 
     Duration::from_secs((next - now).max(1) as u64)

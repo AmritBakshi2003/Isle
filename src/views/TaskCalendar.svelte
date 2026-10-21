@@ -21,6 +21,8 @@
   let showEventPopup = $state(false);
   let editingEvent = $state(null);
   let weekOffset = $state(0); // Week offset from today
+  // +1 when moving forward, -1 when moving back: the strip slides the way you go
+  let weekDir = $state(1);
 
   // Event form state
   let eventTitle = $state('');
@@ -180,10 +182,12 @@
   }
 
   function prevWeek() {
+    weekDir = -1;
     weekOffset -= 1;
   }
 
   function nextWeek() {
+    weekDir = 1;
     weekOffset += 1;
   }
 
@@ -410,25 +414,36 @@
 
     <!-- Week Strip (collapsed) or Full Month (expanded) -->
     {#if !calendarExpanded}
-      <div class="week-strip">
+      <!-- Nav buttons stay put; only the week cells slide, so the arrows never move
+           under the cursor. overflow:hidden keeps the strip inside the panel. -->
+      <div class="week-row">
         <button class="nav-btn" onclick={prevWeek} aria-label="Previous week">
           <Icon name="chevron-left" size={14} />
         </button>
-        {#each weekDays as day, i (day.date)}
-          <button 
-            class="day-cell"
-            class:today={day.isToday}
-            class:selected={day.date === selectedDate}
-            onclick={() => selectDay(day.date)}
-            aria-label={day.isToday ? 'Today' : day.date}
-          >
-            <span class="weekday">{weekdayLetters[i]}</span>
-            <span class="day-number">{day.day}</span>
-            {#if day.hasEvent}
-              <div class="event-dot"></div>
-            {/if}
-          </button>
-        {/each}
+        <div class="week-viewport">
+          {#key weekOffset}
+            <div
+              class="week-strip"
+              style:--from={weekDir * 26}px
+            >
+              {#each weekDays as day, i (day.date)}
+                <button 
+                  class="day-cell"
+                  class:today={day.isToday}
+                  class:selected={day.date === selectedDate}
+                  onclick={() => selectDay(day.date)}
+                  aria-label={day.isToday ? 'Today' : day.date}
+                >
+                  <span class="weekday">{weekdayLetters[i]}</span>
+                  <span class="day-number">{day.day}</span>
+                  {#if day.hasEvent}
+                    <div class="event-dot"></div>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/key}
+        </div>
         <button class="nav-btn" onclick={nextWeek} aria-label="Next week">
           <Icon name="chevron-right" size={14} />
         </button>
@@ -804,12 +819,34 @@
   }
 
   /* Week Strip */
-  .week-strip {
+  .week-row {
     display: flex;
     align-items: center;
     gap: 4px;
     height: 46px;
     flex: 0 0 auto;
+  }
+  .week-viewport {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+  .week-strip {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    will-change: transform, opacity;
+    /* the new week slides in from the side you pressed; enter-only, so the
+       previous strip disappears at once and can never linger as a ghost */
+    animation: week-in .3s cubic-bezier(.22,.9,.3,1) both;
+  }
+  @keyframes week-in {
+    from { opacity: 0; transform: translateX(var(--from, 26px)); }
+    to   { opacity: 1; transform: none; }
   }
 
   .nav-btn {
@@ -1018,13 +1055,14 @@
     overflow-y: auto;
   }
 
-  .events-section-right::-webkit-scrollbar {
-    width: 6px;
+  /* hidden bars, still scrollable: a clean look was requested */
+  .events-section-right {
+    scrollbar-width: none;
   }
 
-  .events-section-right::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.14);
-    border-radius: 3px;
+  .events-section-right::-webkit-scrollbar {
+    width: 0;
+    height: 0;
   }
 
   .tasks-inline {
@@ -1086,13 +1124,13 @@
     gap: 4px;
   }
 
-  .tasks-inline .tasks-list::-webkit-scrollbar {
-    width: 6px;
+  .tasks-inline .tasks-list {
+    scrollbar-width: none;
   }
 
-  .tasks-inline .tasks-list::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.14);
-    border-radius: 3px;
+  .tasks-inline .tasks-list::-webkit-scrollbar {
+    width: 0;
+    height: 0;
   }
 
   .tasks-inline .task-row {

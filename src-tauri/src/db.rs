@@ -9,7 +9,7 @@
 //!  - Access the connection only through `Db::with` so locking stays in one place.
 //!    NEVER call `Db::with` while already inside another `Db::with` (deadlock).
 
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use std::sync::Mutex;
 
 pub struct Db(pub Mutex<Connection>);
@@ -25,7 +25,7 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
-const SCHEMA: &str = "
+pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS clips(
   id INTEGER PRIMARY KEY, text TEXT NOT NULL UNIQUE,
@@ -46,6 +46,10 @@ CREATE TABLE IF NOT EXISTS routines(
   enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS app_shortcuts(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL UNIQUE, icon TEXT, icon_filename TEXT, target TEXT, folder_group TEXT, hidden INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS wellbeing(
+  id INTEGER PRIMARY KEY, app TEXT NOT NULL, path TEXT, title TEXT,
+  started INTEGER NOT NULL, ended INTEGER);
+CREATE INDEX IF NOT EXISTS wellbeing_started ON wellbeing(started);
 ";
 
 /// Migration steps to evolve the schema without breaking existing databases.
@@ -88,6 +92,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("11", "UPDATE tasks SET day = CASE WHEN due IS NOT NULL THEN date(due, 'unixepoch', 'localtime') ELSE date(created, 'unixepoch', 'localtime') END WHERE day IS NULL"),
     ("11", "UPDATE tasks SET done_at = created WHERE done = 1 AND done_at IS NULL"),
     ("11", "ALTER TABLE events ADD COLUMN color TEXT"),
+    // v12: wellbeing (digital wellbeing log) is now in the base SCHEMA above
+    // (the index statement keeps legacy databases in sync).
+    ("12", "CREATE INDEX IF NOT EXISTS wellbeing_started ON wellbeing(started)"),
 ];
 
 impl Db {
@@ -125,7 +132,6 @@ impl Db {
             return Self::open_with_recovery(path);
         }
 
-        seed(&c)?;
         Ok(Db(Mutex::new(c)))
     }
 
@@ -174,7 +180,6 @@ impl Db {
         c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         c.execute_batch(SCHEMA)?;
         run_migrations(&c)?;
-        seed(&c)?;
         
         eprintln!("Database recovery complete - fresh database created");
         Ok(Db(Mutex::new(c)))
@@ -254,27 +259,10 @@ fn run_migrations(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// First-run defaults so the Modes tab is not empty.
-fn seed(c: &Connection) -> rusqlite::Result<()> {
-    let n: i64 = c.query_row("SELECT COUNT(*) FROM modes", [], |r| r.get(0))?;
-    if n == 0 {
-        for (name, icon, actions) in [
-            ("Focus", "🎯", r#"[{"type":"notify","title":"Focus on","body":"One thing at a time."}]"#),
-            ("Break", "☕", r#"[{"type":"notify","title":"Break time","body":"Step away from the screen."}]"#),
-        ] {
-            c.execute(
-                "INSERT INTO modes(name,icon,actions) VALUES(?1,?2,?3)",
-                params![name, icon, actions],
-            )?;
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
     
     #[test]
     fn test_migration_adds_missing_columns() {

@@ -10,7 +10,6 @@
 //!  - If it changes events/routines/settings used by the scheduler, call `sched.wake()`.
 
 use crate::{
-    actions,
     apps,
     clipboard,
     db::{e2s, now, Db},
@@ -23,14 +22,9 @@ use crate::{
 use base64::Engine;
 use rusqlite::params;
 use serde::Serialize;
-use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
-
-fn json(s: String) -> Value {
-    serde_json::from_str(&s).unwrap_or(Value::Null)
-}
 
 // ---------------------------------------------------------------- tasks
 
@@ -346,135 +340,6 @@ pub fn clip_paste_files(db: State<Db>) -> Result<usize, String> {
     crate::clipboard::paste_files_from_clipboard(db)
 }
 
-// ---------------------------------------------------------------- modes
-
-#[derive(Serialize)]
-pub struct Mode {
-    id: i64,
-    name: String,
-    icon: String,
-    actions: Value,
-}
-
-#[tauri::command]
-pub fn mode_list(db: State<Db>) -> Result<Vec<Mode>, String> {
-    db.with(|c| {
-        let mut s = c.prepare("SELECT id,name,icon,actions FROM modes ORDER BY id")?;
-        let rows = s.query_map([], |r| {
-            Ok(Mode { id: r.get(0)?, name: r.get(1)?, icon: r.get(2)?, actions: json(r.get(3)?) })
-        })?;
-        rows.collect()
-    })
-}
-
-#[tauri::command]
-pub fn mode_save(db: State<Db>, id: Option<i64>, name: String, icon: String, actions: Value) -> Result<i64, String> {
-    db.with(|c| {
-        let a = actions.to_string();
-        match id {
-            Some(i) => {
-                c.execute("UPDATE modes SET name=?1,icon=?2,actions=?3 WHERE id=?4", params![name, icon, a, i])?;
-                Ok(i)
-            }
-            None => {
-                c.execute("INSERT INTO modes(name,icon,actions) VALUES(?1,?2,?3)", params![name, icon, a])?;
-                Ok(c.last_insert_rowid())
-            }
-        }
-    })
-}
-
-#[tauri::command]
-pub fn mode_delete(db: State<Db>, id: i64) -> Result<(), String> {
-    db.with(|c| c.execute("DELETE FROM modes WHERE id=?1", [id]).map(|_| ()))
-}
-
-/// Run a mode's actions and remember it as the active mode (`active_mode` setting).
-/// If deactivating (id matches current active mode), just clear the active mode.
-#[tauri::command]
-pub fn mode_activate(app: AppHandle, db: State<Db>, id: i64) -> Result<(), String> {
-    let current_mode = db.setting("active_mode");
-    let is_deactivating = current_mode.as_deref() == Some(&id.to_string());
-    
-    if is_deactivating {
-        db.set_setting("active_mode", "")?;
-    } else {
-        let a: String = db.with(|c| c.query_row("SELECT actions FROM modes WHERE id=?1", [id], |r| r.get(0)))?;
-        db.set_setting("active_mode", &id.to_string())?;
-        actions::run(&app, &json(a))?;
-    }
-    
-    Ok(())
-}
-
-// ------------------------------------------------------------- routines
-
-#[derive(Serialize)]
-pub struct Routine {
-    id: i64,
-    name: String,
-    trigger: Value, // {"kind":"manual"} | {"kind":"time","at":"HH:MM","days":[0-6]}
-    actions: Value,
-    enabled: bool,
-}
-
-#[tauri::command]
-pub fn routine_list(db: State<Db>) -> Result<Vec<Routine>, String> {
-    db.with(|c| {
-        let mut s = c.prepare("SELECT id,name,trig,actions,enabled FROM routines ORDER BY id")?;
-        let rows = s.query_map([], |r| {
-            Ok(Routine {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                trigger: json(r.get(2)?),
-                actions: json(r.get(3)?),
-                enabled: r.get::<_, i64>(4)? != 0,
-            })
-        })?;
-        rows.collect()
-    })
-}
-
-#[tauri::command]
-pub fn routine_save(
-    db: State<Db>,
-    sched: State<Scheduler>,
-    id: Option<i64>,
-    name: String,
-    trigger: Value,
-    actions: Value,
-) -> Result<i64, String> {
-    let r = db.with(|c| {
-        let (t, a) = (trigger.to_string(), actions.to_string());
-        match id {
-            Some(i) => {
-                c.execute("UPDATE routines SET name=?1,trig=?2,actions=?3 WHERE id=?4", params![name, t, a, i])?;
-                Ok(i)
-            }
-            None => {
-                c.execute("INSERT INTO routines(name,trig,actions) VALUES(?1,?2,?3)", params![name, t, a])?;
-                Ok(c.last_insert_rowid())
-            }
-        }
-    })?;
-    sched.wake();
-    Ok(r)
-}
-
-#[tauri::command]
-pub fn routine_toggle(db: State<Db>, sched: State<Scheduler>, id: i64, enabled: bool) -> Result<(), String> {
-    db.with(|c| c.execute("UPDATE routines SET enabled=?1 WHERE id=?2", params![enabled as i64, id]).map(|_| ()))?;
-    sched.wake();
-    Ok(())
-}
-
-#[tauri::command]
-pub fn routine_delete(db: State<Db>, sched: State<Scheduler>, id: i64) -> Result<(), String> {
-    db.with(|c| c.execute("DELETE FROM routines WHERE id=?1", [id]).map(|_| ()))?;
-    sched.wake();
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -501,25 +366,15 @@ mod tests {
     }
 }
 
-#[tauri::command]
-pub async fn routine_run(app: AppHandle, db: State<'_, Db>, id: i64) -> Result<(), String> {
-    let a: String = db.with(|c| c.query_row("SELECT actions FROM routines WHERE id=?1", [id], |r| r.get(0)))?;
-    actions::run(&app, &json(a))
-}
-
-// ------------------------------------------------- wallpaper & settings
-
-#[tauri::command]
-pub async fn wallpaper_next(app: AppHandle) -> Result<(), String> {
-    actions::wallpaper_next(&app)
-}
+// ------------------------------------------------------------------ settings
 
 #[tauri::command]
 pub fn setting_get(db: State<Db>, key: String) -> Option<String> {
     db.setting(&key)
 }
 
-/// Known keys: wallpaper_dir, wallpaper_interval (minutes), active_mode.
+/// Generic key/value store; the Workspace tab owns `wellbeing_enabled`,
+/// `net_ping_public` and `net_ping_host` through its own commands instead.
 #[tauri::command]
 pub fn setting_set(db: State<Db>, sched: State<Scheduler>, _app: AppHandle, key: String, value: String) -> Result<(), String> {
     db.set_setting(&key, &value)?;

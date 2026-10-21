@@ -13,7 +13,7 @@
     click_action: 'expand', always_on_top: 'true',
     blur_on_battery: 'false', hover_expand: 'false',
     module_media: 'true', module_calendar: 'true', module_tasks: 'true',
-    module_clipboard: 'true',
+    module_clipboard: 'true', module_workspace: 'true',
     media_album_art: 'true', media_progress_ring: 'true',
     media_controls: 'full', media_update_speed: '1000',
     progress_file_copy: 'true', progress_download: 'true',
@@ -22,6 +22,8 @@
     hotkey_toggle: 'ctrl+alt+space',
     log_level: 'error', log_to_file: 'false',
     single_instance_port: '47123',
+    // workspace (written through net_settings_set / wellbeing_enabled_set)
+    net_ping_public: '0', net_ping_host: '1.1.1.1',
   };
 
   let s = $state({ ...DEFAULTS, autostart: false });
@@ -29,15 +31,27 @@
   let saved = $state(false);
   let recordingKey = $state(null);
   let loaded = $state(false);
+  // -- workspace section (its own commands, not setting_set) ---------------
+  let wbOn = $state(true);
+  let netGateway = $state('');
+  // -- weather section (weather.rs commands, not setting_set) ---------------
+  let wx = $state({ enabled: false, place: '', units: 'c', has_location: false });
+  let wxQuery = $state('');
+  let wxBusy = $state(false);
+  let wxMsg = $state('');
+  // net_ping_public is stored as '1'/'0' (see network.rs), not 'true'/'false'
+  const netPublic = $derived(s.net_ping_public === '1' || s.net_ping_public === true);
 
   const TABS = [
     { id: 'appearance',   icon: 'appearance', label: 'Appearance' },
     { id: 'behavior',     icon: 'behavior',  label: 'Behavior' },
     { id: 'modules',      icon: 'modules', label: 'Modules' },
     { id: 'media',        icon: 'media', label: 'Media' },
+    { id: 'weather',      icon: 'sun', label: 'Weather' },
     { id: 'progress',     icon: 'progress', label: 'Live Progress' },
     { id: 'hotkeys',      icon: 'hotkeys',  label: 'Hotkeys' },
     { id: 'advanced',     icon: 'advanced', label: 'Advanced' },
+    { id: 'workspace',    icon: 'workspace', label: 'Workspace' },
   ];
 
   onMount(async () => {
@@ -47,6 +61,13 @@
       Object.assign(s, DEFAULTS, all);
       loaded = true;
       s.autostart = await call('autostart_get');
+      wbOn = await call('wellbeing_enabled_get');
+      const n = await call('net_settings_get');
+      s.net_ping_public = n.public ? '1' : '0';
+      s.net_ping_host = n.host || '1.1.1.1';
+      netGateway = n.gateway || '';
+      Object.assign(wx, await call('weather_settings_get'));
+      wxQuery = wx.place || '';
     } catch(e) { console.warn('settings load:', e); loaded = true; }
   });
 
@@ -90,6 +111,110 @@
     }
   }
 
+  // -- workspace section -----------------------------------------------------
+  async function setWellbeing(v) {
+    wbOn = v;
+    try {
+      await call('wellbeing_enabled_set', { enabled: v });
+      flash();
+    } catch (e) {
+      console.error('Failed to toggle activity logging:', e);
+      alert(`Failed to toggle activity logging: ${e}`);
+    }
+  }
+
+  async function setNet(publicTarget) {
+    s.net_ping_public = publicTarget ? '1' : '0';
+    try {
+      await call('net_settings_set', {
+        public: publicTarget,
+        host: s.net_ping_host || '1.1.1.1',
+      });
+      flash();
+    } catch (e) {
+      console.error('Failed to save latency target:', e);
+      alert(`Failed to save latency target: ${e}`);
+    }
+  }
+
+  async function saveNetHost(value) {
+    const host = String(value || '').trim();
+    if (!host) { alert('Enter a hostname or IP address.'); return; }
+    s.net_ping_host = host;
+    await setNet(true);
+  }
+
+  // -- weather section -------------------------------------------------------
+  async function setWeatherEnabled(v) {
+    const prev = wx.enabled;
+    wx.enabled = v;
+    try {
+      await call('weather_enabled_set', { enabled: v });
+      wxMsg = v ? '' : 'Weather is off — the pill chip is hidden.';
+      flash();
+    } catch (e) {
+      wx.enabled = prev;
+      alert(`Failed to toggle weather: ${e}`);
+    }
+  }
+
+  async function setWeatherUnits(u) {
+    const prev = wx.units;
+    wx.units = u;
+    try {
+      await call('weather_units_set', { units: u });
+      flash();
+    } catch (e) {
+      wx.units = prev;
+      alert(`Failed to save units: ${e}`);
+    }
+  }
+
+  async function applyWeatherPlace() {
+    const q = wxQuery.trim();
+    if (!q) { wxMsg = 'Type a city or town first.'; return; }
+    wxBusy = true;
+    wxMsg = '';
+    try {
+      const w = await call('weather_location_set', { query: q });
+      Object.assign(wx, { enabled: true, place: w.place || q, has_location: true });
+      wxQuery = wx.place;
+      wxMsg = w.ok
+        ? `Saved — ${wx.place} is ${Math.round(w.units === 'f' ? (w.temp_c * 9) / 5 + 32 : w.temp_c)}° right now.`
+        : (w.error || 'Location saved, but the first fetch failed.');
+      flash();
+    } catch (e) {
+      wxMsg = String(e?.message ?? e);
+    } finally {
+      wxBusy = false;
+    }
+  }
+
+  async function refreshWeather() {
+    wxBusy = true;
+    wxMsg = '';
+    try {
+      const w = await call('weather_refresh');
+      wxMsg = w.ok ? 'Updated just now.' : (w.error || 'Refresh failed.');
+      if (w.ok) Object.assign(wx, { place: w.place || wx.place });
+    } catch (e) {
+      wxMsg = String(e?.message ?? e);
+    } finally {
+      wxBusy = false;
+    }
+  }
+
+  async function clearActivity() {
+    if (!confirm('Delete all recorded activity?')) return;
+    try {
+      await call('wellbeing_clear');
+      flash();
+    } catch (e) {
+      console.error('Failed to clear activity:', e);
+      alert(`Failed to clear activity: ${e}`);
+    }
+  }
+
   function flash() {
     saved = true;
     setTimeout(() => saved = false, 1800);
@@ -103,6 +228,9 @@
     Object.assign(s, DEFAULTS);
     s.autostart = false;
     await call('autostart_set', { enabled: false });
+    // weather lives outside setting_set, so reset it explicitly
+    await call('weather_enabled_set', { enabled: false }).catch(() => {});
+    Object.assign(wx, { enabled: false });
     flash();
   }
 
@@ -337,9 +465,9 @@
 
       {#each [
         {key:'module_media',           label:'Media Player',          icon:'media'},
-        {key:'module_calendar',        label:'Calendar & Events',      icon:'calendar'},
-        {key:'module_tasks',           label:'Tasks',                  icon:'tasks'},
+        {key:'module_tasks',           label:'Tasks & Calendar',       icon:'tasks'},
         {key:'module_clipboard',       label:'Clipboard History',      icon:'clips'},
+        {key:'module_workspace',       label:'Workspace (network, apps, topmost)', icon:'workspace'},
       ] as m}
       <div class="module-row">
         <div class="module-info">
@@ -376,6 +504,17 @@
       </div>
 
 
+
+      <div class="row">
+        <span class="row-label">Transport Controls
+          <span class="val">Simple hides prev/next and keeps play/pause only.</span>
+        </span>
+        <div class="seg">
+          {#each [{v:'full',l:'full'},{v:'simple',l:'simple'}] as c}
+            <button class:on={s.media_controls===c.v} onclick={()=>save('media_controls',c.v)}>{c.l}</button>
+          {/each}
+        </div>
+      </div>
 
       <div class="row">
         <span class="row-label">Update Speed</span>
@@ -507,6 +646,122 @@
           <p>Wipe all settings and restore factory defaults.</p>
         </div>
         <button class="btn-action danger" onclick={resetAll}>Reset</button>
+      </div>
+    </section>
+
+    <!-- -- WEATHER ------------------------------------------------------- -->
+    {:else if tab === 'weather'}
+    <section class="panel">
+      <h2>Weather</h2>
+      <p class="hint">Shows the current conditions in the pill. Isle only asks for the place you type here — it never guesses your location.</p>
+
+      <div class="row">
+        <span class="row-label">Show Weather
+          <span class="val">
+            {#if !wx.has_location}Set a location below to turn this on.
+            {:else if wx.enabled}{wx.place} — visible in the pill
+            {:else}Chip hidden
+            {/if}
+          </span>
+        </span>
+        <button class="toggle" class:on={wx.enabled} disabled={!wx.has_location}
+                onclick={() => setWeatherEnabled(!wx.enabled)}>
+          {wx.enabled ? 'On' : 'Off'}
+        </button>
+      </div>
+
+      <div class="row">
+        <span class="row-label">Location
+          <span class="val">City or town, e.g. Mumbai, Reykjavík, New York</span>
+        </span>
+        <div class="wx-input">
+          <input type="text" bind:value={wxQuery} spellcheck="false" placeholder="Search a place…"
+                 onkeydown={(e) => e.key === 'Enter' && applyWeatherPlace()} />
+          <button class="btn-action" onclick={applyWeatherPlace} disabled={wxBusy}>
+            {wxBusy ? '…' : 'Set'}
+          </button>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="row-label">Units</span>
+        <div class="seg">
+          <button class:on={wx.units === 'c'} onclick={() => setWeatherUnits('c')}>°C</button>
+          <button class:on={wx.units === 'f'} onclick={() => setWeatherUnits('f')}>°F</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="row-label">Refresh
+          <span class="val">Updates automatically every 30 minutes.</span>
+        </span>
+        <button class="btn-action" onclick={refreshWeather} disabled={wxBusy || !wx.has_location}>
+          <Icon name="refresh" size={14} /> Now
+        </button>
+      </div>
+
+      {#if wxMsg}<p class="hint wx-msg">{wxMsg}</p>{/if}
+
+      <div class="info-box">
+        Data from Open-Meteo (open-meteo.com), which needs no account or key.
+        Nothing is sent until you press <strong>Set</strong>, and then only the
+        coordinates of the place you chose. Weather is the only request Isle makes
+        besides the latency ping — both are off by default.
+      </div>
+    </section>
+
+    <!-- -- WORKSPACE ----------------------------------------------------- -->
+    {:else if tab === 'workspace'}
+    <section class="panel">
+      <h2>Workspace</h2>
+      <p class="hint">The dashboard itself lives in the island. These rows control what it may collect.</p>
+
+      <div class="row">
+        <span class="row-label">Activity Logging
+          <span class="val">Remembers which app was in front, so the today card can show your day.</span>
+        </span>
+        <button class="toggle" class:on={wbOn} onclick={() => setWellbeing(!wbOn)}>
+          {wbOn ? 'On' : 'Off'}
+        </button>
+      </div>
+
+      <div class="row">
+        <span class="row-label">Latency Target
+          <span class="val">
+            {netPublic
+              ? `Pinging ${s.net_ping_host} — traffic leaves your network`
+              : `Pinging your gateway${netGateway ? ` (${netGateway})` : ''} — LAN only`}
+          </span>
+        </span>
+        <div class="seg">
+          <button class:active={!netPublic} onclick={() => setNet(false)}>Local</button>
+          <button class:active={netPublic} onclick={() => setNet(true)}>Public</button>
+        </div>
+      </div>
+
+      {#if netPublic}
+      <div class="row indent">
+        <span class="row-label">Host
+          <span class="val">Hostname or IP to ping</span>
+        </span>
+        <input type="text" value={s.net_ping_host} spellcheck="false"
+               onchange={(e) => saveNetHost(e.target.value)} />
+      </div>
+      {/if}
+
+      <div class="info-box">
+        Isle never uploads anything. The latency probe is the only packet it sends:
+        a single ICMP echo per second, and only while the Workspace tab is open.
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="action-row danger">
+        <div>
+          <strong>Clear Activity Log</strong>
+          <p>Delete every recorded app session. Nothing else is touched.</p>
+        </div>
+        <button class="btn-action danger" onclick={clearActivity}>Clear</button>
       </div>
     </section>
     {/if}
@@ -659,6 +914,7 @@
     overflow: hidden;
     border: 1px solid #2a2a32;
   }
+  .seg button.active { background: #7c6af7; color: #fff; }
   .seg button {
     background: #18181e;
     border: none;
@@ -745,6 +1001,24 @@
     0%, 100% { box-shadow: 0 0 0 0 #f7706a44; }
     50% { box-shadow: 0 0 0 6px #f7706a00; }
   }
+
+  /* -- Weather -- */
+  .wx-input { display: flex; align-items: center; gap: 8px; }
+  .wx-input input[type=text] {
+    background: #18181e;
+    border: 1px solid #2a2a32;
+    border-radius: 8px;
+    color: #e8e8ea;
+    font: inherit;
+    font-size: 13px;
+    padding: 8px 12px;
+    width: 220px;
+  }
+  .wx-input input[type=text]:focus { outline: none; border-color: #7c6af7; }
+  .wx-msg { margin-top: 14px; margin-bottom: 0; color: #9a8ffb; }
+  .btn-action { display: inline-flex; align-items: center; gap: 6px; justify-content: center; }
+  .btn-action:disabled, .toggle:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-action:disabled:hover { background: #252530; color: #ccc; }
 
   /* -- Info box -- */
   .info-box {

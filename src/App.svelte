@@ -15,7 +15,7 @@
 -->
 <script>
   import { onMount } from 'svelte';
-  import { fade } from 'svelte/transition';
+  import { fade, fly } from 'svelte/transition';
   import { call, on, inTauri } from './lib/api.js';
   import { ui, media, progress, setProgress, clearProgress, applyMedia, accentFromArt } from './lib/state.svelte.js';
   import { fmtClock } from './lib/util.js';
@@ -31,7 +31,7 @@
     { id: 'clips', label: 'Clipboard', icon: 'clips', setting: 'module_clipboard' },
     { id: 'tasks', label: 'Tasks & Calendar', icon: 'tasks', setting: 'module_tasks' },
     { id: 'utility', label: 'Utility Drawer', icon: 'utility', setting: null },
-    { id: 'workspace', label: 'Workspace', icon: 'workspace', setting: null },
+    { id: 'workspace', label: 'Workspace', icon: 'workspace', setting: 'module_workspace' },
     { id: 'settings', label: 'Settings', icon: 'settings', setting: null },
   ];
   
@@ -40,6 +40,7 @@
     module_clipboard: 'true',
     module_tasks: 'true',
     module_calendar: 'true',
+    module_workspace: 'true',
     click_action: 'expand',
     blur_on_battery: 'false',
     bg_blur: 'auto',
@@ -56,6 +57,11 @@
   
   const tabs = $derived(allTabs.filter(t => {
     if (!t.setting) return true;
+    // one tab holds two modules: it stays while either is enabled
+    if (t.id === 'tasks') {
+      const on = (v) => v === 'true' || v === true;
+      return on(moduleSettings.module_tasks) || on(moduleSettings.module_calendar);
+    }
     const val = moduleSettings[t.setting];
     return val === 'true' || val === true;
   }));
@@ -70,6 +76,42 @@
   let settingsLoaded = $state(false);
   let isHovering = $state(false);
   let showChargingIndicator = $state(false);
+
+  // ── weather chip (opt-in; backend in src-tauri/src/weather.rs) ─────────
+  // Cached on the backend, so a cold start paints instantly and no request
+  // happens unless the user set a place in Settings → Weather.
+  let weather = $state(null);
+
+  /** Collapsed-pill content: while a track is playing the pill shows the album
+   *  art + equaliser instead of the clock — and the weather chip is dropped
+   *  too, so only the music animation shows (weather returns with the clock). */
+  const showMusic = $derived(media.active && media.playing);
+
+  const weatherTemp = $derived.by(() => {
+    if (!weather?.ok) return "";
+    const c = Number(weather.temp_c) || 0;
+    return `${Math.round(weather.units === "f" ? (c * 9) / 5 + 32 : c)}°`;
+  });
+
+  /** WMO weather code -> icon name (see Icon.svelte). */
+  function weatherIconFor(code) {
+    const c = Number(code);
+    if (c === 0 || c === 1) return "sun";
+    if (c === 2) return "cloud-sun";
+    if (c === 3) return "cloud";
+    if (c === 45 || c === 48) return "fog";
+    if ((c >= 51 && c <= 57) || (c >= 61 && c <= 67) || (c >= 80 && c <= 82)) return "rain";
+    if ((c >= 71 && c <= 77) || c === 85 || c === 86) return "snow";
+    if (c >= 95) return "storm";
+    return "cloud-sun";
+  }
+  const weatherIcon = $derived(weather?.ok ? weatherIconFor(weather.code) : "sun");
+  const weatherTitle = $derived.by(() => {
+    if (!weather?.ok) return "Weather: set a location in Settings";
+    const f = weather.units === "f";
+    const feels = Math.round(f ? (Number(weather.feels_c) * 9) / 5 + 32 : Number(weather.feels_c));
+    return `${weather.place} · feels ${feels}° · ${weather.humidity}% humidity · ${Math.round(Number(weather.wind_kph) || 0)} km/h`;
+  });
 
   // ── apply appearance + behavior settings ───────────────────────────────
   const DEFAULT_SETTINGS = {
@@ -121,6 +163,7 @@
       module_clipboard: settings.module_clipboard ?? 'true',
       module_tasks: settings.module_tasks ?? 'true',
       module_calendar: settings.module_calendar ?? 'true',
+      module_workspace: settings.module_workspace ?? 'true',
       click_action: settings.click_action ?? 'expand',
       blur_on_battery: settings.blur_on_battery ?? 'false',
       bg_blur: settings.bg_blur ?? 'auto',
@@ -349,8 +392,11 @@
     if (!inTauri) document.documentElement.style.background = 'linear-gradient(135deg,#2a3142,#4b3b52)';
     call('media_get').then(applyMedia);
 
+    call('weather_get').then((w) => (weather = w)).catch(() => {});
+
     const offs = [
       on('media://update', applyMedia),
+      on('weather://update', (w) => (weather = w)),
       on('island://toggle', toggle),
       on('island://show', showPill),
       on('progress://update', ({ value, label }) => {
@@ -465,12 +511,25 @@
     aria-label="Isle"
   >
     {#if !ui.expanded}
-      <button class="mini" onclick={handlePillClick} aria-label="Open Isle" in:fade={{ duration: 160, delay: 220 }}>
-        {#if media.active && media.playing}
-          <span class="art" style:background-image={media.art ? `url(${media.art})` : 'none'}></span>
+      <button
+        class="mini"
+        class:has-progress={progress.value >= 0 && progress.label}
+        onclick={handlePillClick}
+        aria-label="Open Isle"
+        in:fade={{ duration: 160, delay: 220 }}
+      >
+        {#if showMusic}
+          <span class="art" style:background-image={media.art ? `url("${media.art}")` : 'none'}></span>
           <span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>
         {:else}
           <span class="clock">{clock}</span>
+        {/if}
+
+        {#if !showMusic && weather?.ok && weatherTemp}
+          <span class="weather" title={weatherTitle} in:fade={{ duration: 200 }}>
+            <Icon name={weatherIcon} size={12} />
+            <span class="wtemp">{weatherTemp}</span>
+          </span>
         {/if}
 
         {#if showChargingIndicator}
@@ -481,13 +540,15 @@
         {/if}
 
         {#if progress.value >= 0 && progress.label}
-          <span class="prog-label" in:fade={{ duration: 140 }} out:fade={{ duration: 100 }}>{progress.label}</span>
+          <span class="prog-label" in:fade={{ duration: 140 }} out:fade={{ duration: 100 }}>
+            {progress.label} {Math.round(progress.value)}%
+          </span>
         {/if}
       </button>
     {/if}
     {#if ui.expanded}
-      <div class="content" in:fade={{ duration: 200, delay: 170 }} out:fade={{ duration: 90 }}>
-        <nav class="tabs" aria-label="Sections" style:--i={index}>
+      <div class="content" in:fly={{ y: 10, duration: 260, delay: 140 }} out:fade={{ duration: 90 }}>
+        <nav class="tabs" aria-label="Sections" style:--i={index} style:--tab-count={tabs.length}>
           <span class="pill" aria-hidden="true"></span>
           {#each tabs as t}
             <button class="tab" class:active={ui.tab === t.id} onclick={() => handleTabClick(t.id)}
@@ -497,14 +558,18 @@
           {/each}
         </nav>
         <section class="body">
-          {#if ui.tab === 'music'}<Music />
-          {:else if ui.tab === 'clips'}<Clips />
-          {:else if ui.tab === 'tasks'}<TaskCalendar />
-          {:else if ui.tab === 'utility'}<UtilityDrawer />
-          {:else if ui.tab === 'workspace'}<Workspace />
-          {:else if ui.tab === 'settings'}
-            <div class="settings-hint">Opening settings…</div>
-          {/if}
+          {#key ui.tab}
+            <div class="pane">
+              {#if ui.tab === 'music'}<Music />
+              {:else if ui.tab === 'clips'}<Clips />
+              {:else if ui.tab === 'tasks'}<TaskCalendar />
+              {:else if ui.tab === 'utility'}<UtilityDrawer />
+              {:else if ui.tab === 'workspace'}<Workspace />
+              {:else if ui.tab === 'settings'}
+                <div class="settings-hint">Opening settings…</div>
+              {/if}
+            </div>
+          {/key}
         </section>
         {#if ui.toast}<div class="toast" class:toast-top={ui.toastPosition === 'top'} in:fade={{ duration: 120 }} out:fade={{ duration: 160 }}>{ui.toast}</div>{/if}
       </div>
@@ -570,7 +635,13 @@
     box-shadow: none;
     border: var(--setting-border, none);
     transition: width .6s var(--spring), height .6s var(--spring), border-radius .6s var(--spring);
+    animation: island-in .5s var(--spring) both;
     z-index: 1;
+  }
+  /* the pill drops in once, when the window first paints */
+  @keyframes island-in {
+    from { transform: translateY(-12px) scale(.94); }
+    to   { transform: none; }
   }
   .island.open     { --w: 500px; --h: 326px; --r: 30px; }
   .island.charging { --w: calc(var(--setting-pill-w, 200px) + 16px); }
@@ -582,6 +653,15 @@
     gap: 0; padding: 0 12px;
   }
   .mini:has(.art) { justify-content: space-between; }
+  /* While a download/install is running the pill reads as one line:
+     art · label + percent · battery. The equaliser is dropped so the
+     text is never drawn over the animation. */
+  .mini.has-progress .eq { display: none; }
+  .mini.has-progress .clock { flex: 0 0 auto; }
+  .mini.has-progress .prog-label {
+    position: static; transform: none; margin-left: 6px;
+    font-size: 10px; letter-spacing: .02em; opacity: .95;
+  }
   .clock { font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: .02em; flex: 1; text-align: center; }
   .art   { width: 24px; height: 24px; border-radius: 50%; background: var(--row-hi) center/cover; flex-shrink: 0; }
 
@@ -608,9 +688,18 @@
     box-shadow: 0 0 5px currentColor;
   }
 
+  /* weather chip: current conditions, opt-in via Settings → Weather */
+  .weather {
+    display: flex; align-items: center; gap: 3px; flex-shrink: 0;
+    margin-left: 6px; color: var(--ink); opacity: .92;
+    font-size: 11px; font-variant-numeric: tabular-nums;
+  }
+  .weather :global(svg) { color: var(--accent); }
+  .wtemp { font-weight: 650; letter-spacing: -.2px; }
+
   /* progress label (appears below clock text, micro-font) */
   .prog-label {
-    position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%);
+    position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
     font-size: 9px; font-weight: 700; letter-spacing: .05em;
     color: var(--accent); white-space: nowrap; pointer-events: none; opacity: .85;
   }
@@ -623,7 +712,14 @@
   .tab { position: relative; height: 30px; display: grid; place-items: center; color: var(--dim); transition: color .2s; }
   .tab.active, .tab:hover { color: var(--ink); }
   .tab.active { color: var(--accent); }
-  .body { flex: 1; min-height: 0; }
+  .body { flex: 1; min-height: 0; overflow: hidden; }
+  /* CSS enter animation rather than an outro: the old pane leaves at once, so
+     the new one can never be pushed out of the 278px body by a stale sibling */
+  .pane { height: 100%; min-height: 0; animation: pane-in .26s cubic-bezier(.22,.9,.3,1) both; }
+  @keyframes pane-in {
+    from { opacity: 0; transform: translateY(8px) scale(.995); }
+    to   { opacity: 1; transform: none; }
+  }
   .settings-hint {
     display: flex;
     align-items: center;

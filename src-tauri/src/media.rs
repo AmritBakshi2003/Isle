@@ -45,10 +45,6 @@ pub fn start(app: AppHandle) {
     imp::start(app)
 }
 
-pub fn control(cmd: &str) -> Result<(), String> {
-    imp::control(cmd)
-}
-
 #[cfg(windows)]
 mod imp {
     use super::MediaState;
@@ -109,7 +105,7 @@ mod imp {
     }
 
     fn attach(app: &AppHandle, mgr: &Manager) {
-        let session = mgr.GetCurrentSession().ok();
+        let session = pick(mgr);
         if let Some(s) = &session {
             hook!(s, app, MediaPropertiesChanged);
             hook!(s, app, PlaybackInfoChanged);
@@ -120,6 +116,37 @@ mod imp {
             eprintln!("[isle WARNING] Failed to acquire media session lock");
         }
         publish(app, session.as_ref());
+    }
+
+    /// "Current" can mean *last touched*, not *playing*: a paused Spotify row
+    /// stays current while a YouTube tab plays in Chrome, so the panel looks
+    /// dead. Prefer the current session when it is playing, then any session
+    /// that is playing, and only then fall back to the current one (so a paused
+    /// track still shows its title and art).
+    fn pick(mgr: &Manager) -> Option<Session> {
+        fn playing(s: &Session) -> bool {
+            s.GetPlaybackInfo()
+                .ok()
+                .and_then(|p| p.PlaybackStatus().ok())
+                == Some(GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
+        }
+
+        let current = mgr.GetCurrentSession().ok();
+        if let Some(s) = &current {
+            if playing(s) {
+                return current;
+            }
+        }
+        if let Ok(list) = mgr.GetSessions() {
+            for i in 0..list.Size().unwrap_or(0) {
+                if let Ok(s) = list.GetAt(i) {
+                    if playing(&s) {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+        current
     }
 
     fn publish(app: &AppHandle, s: Option<&Session>) {

@@ -1,6 +1,6 @@
 [package]
 name = "isle"
-version = "0.2.4"
+version = "0.3.0"
 description = "Isle: a Dynamic-Island-style productivity overlay for Windows"
 edition = "2021"
 
@@ -21,7 +21,6 @@ serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = "0.4"
 open = "5"          # open files / apps / URLs with the shell
-wallpaper = "3"     # set desktop wallpaper from a file path
 arboard = { version = "3", features = ["image-data"] }  # read/write clipboard text and images
 base64 = "0.22"
 image = "0.25"      # image encoding/decoding
@@ -35,6 +34,7 @@ windows = { version = "0.58", features = [
   "Devices_Power",
   "System_Power",
   "Foundation",
+  "Foundation_Collections",   # GetSessions(): pick the playing app, not the last-touched one
   "Media_Control",
   "Storage_Streams",
   "Win32_Foundation",
@@ -43,11 +43,19 @@ windows = { version = "0.58", features = [
   "Win32_System_Services",
   "Win32_System_SystemInformation",
   "Win32_Networking_BackgroundIntelligentTransferService",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Networking_WinSock",
+  "Win32_UI_Accessibility",
+  "Win32_System_Threading",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_System_Power",
   "Win32_System_Registry",
+  "Win32_System_Performance",
+  "Win32_Networking_WinHttp",
+  "Win32_System_ProcessStatus",
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_UI_Shell",

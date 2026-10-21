@@ -59,10 +59,97 @@ const M = {
   art: art('#ff7a59', '#5b2a86'),
 };
 let seq = 100;
+
+/* Workspace dashboard mock state. The sampler only ticks while the Workspace
+   tab has called net_sampler_set(true) — same duty cycle as the Rust one. */
+const net = { on: false, timer: null, seq: 0, down: 0 };
+const netSample = () => {
+  // a burst every handful of seconds so the sparkline has shape
+  const burst = ++net.seq % 7 === 0;
+  const target = burst ? 4e6 + Math.random() * 1.2e7 : 40e3 + Math.random() * 500e3;
+  net.down = Math.round(net.down * 0.55 + target * 0.45);
+  return {
+    down_bps: net.down,
+    up_bps: Math.round(net.down * (0.04 + Math.random() * 0.14)),
+    link_down_bps: 1_000_000_000,
+    link_up_bps: 1_000_000_000,
+    iface: 'Wi-Fi',
+    latency_ms: Math.random() < 0.03 ? null : 9 + Math.round(Math.random() * 14),
+    ts: sec(),
+  };
+};
+let lastNet = null;
+const netGate = (on) => {
+  net.on = on;
+  clearInterval(net.timer);
+  net.timer = null;
+  if (!on) return;
+  net.timer = setInterval(() => {
+    lastNet = netSample();
+    emit('workspace://network', lastNet);
+  }, 1000);
+};
+
+/* Resource monitor mock: five believable apps whose load drifts each tick. */
+const MOCK_APPS = [
+  { pid: 4321, hwnd: 131082, app: 'Code.exe', title: 'isle: src/App.svelte', cpu: 14.2, mem: 3.1, gpu: 0.8 },
+  { pid: 5122, hwnd: 262280, app: 'msedgewebview2.exe', title: 'Tauri 2 — WebView2', cpu: 7.5, mem: 4.6, gpu: 3.4 },
+  { pid: 6033, hwnd: 393356, app: 'Teams.exe', title: 'Design sync | Microsoft Teams', cpu: 3.1, mem: 2.8, gpu: 1.9 },
+  { pid: 7144, hwnd: 524432, app: 'chrome.exe', title: 'Tauri 2 docs', cpu: 1.4, mem: 2.2, gpu: 0.4 },
+  { pid: 8255, hwnd: 655508, app: 'explorer.exe', title: 'Downloads', cpu: 0.3, mem: 0.9, gpu: 0.0 },
+];
+const drift = (v) => Math.max(0, Math.min(100, v + (Math.random() - 0.55) * Math.max(0.3, v * 0.35)));
+const apps = { on: false, timer: null, rows: [], keep: new Set() };
+const appsSample = () => {
+  apps.rows = MOCK_APPS.map((a) => ({
+    hwnd: a.hwnd,
+    pid: a.pid,
+    app: a.app,
+    title: a.title,
+    cpu_pct: (a.cpu = drift(a.cpu)),
+    mem_pct: (a.mem = drift(a.mem) * 0.4 + a.mem * 0.6),
+    gpu_pct: (a.gpu = drift(a.gpu)),
+    topmost: apps.keep.has(a.hwnd),
+  })).sort((x, y) => (y.cpu_pct + y.mem_pct + y.gpu_pct) - (x.cpu_pct + x.mem_pct + x.gpu_pct));
+  return {
+    rows: apps.rows,
+    gpu_available: true,
+    cores: navigator.hardwareConcurrency || 4,
+    mem_total_mb: 16264,
+    ts: sec(),
+  };
+};
+let lastApps = null;
+const appsGate = (on) => {
+  apps.on = on;
+  clearInterval(apps.timer);
+  apps.timer = null;
+  if (!on) return;
+  apps.timer = setInterval(() => {
+    lastApps = appsSample();
+    emit("workspace://apps", lastApps);
+  }, 1000);
+};
+
+/* Digital wellbeing mock: a believable working day, most recent first. */
+const wbRow = (app, minutes, title) => ({
+  app, title, seconds: Math.round(minutes * 60), started: sec() - Math.round(minutes * 60), ended: sec(),
+});
+const wellbeingRows = () => [
+  wbRow('Code.exe', 96, 'isle: src/App.svelte'),
+  wbRow('chrome.exe', 41, 'Tauri 2 docs'),
+  wbRow('Teams.exe', 24, 'Design sync'),
+  wbRow('Alteryx.exe', 18, 'ETL workflow'),
+  wbRow('explorer.exe', 9, 'Downloads'),
+];
+const WINDOWS = () => [
+  { hwnd: 131082, pid: 4321, title: 'isle: src/App.svelte — Visual Studio Code', process: 'Code.exe' },
+  { hwnd: 262280, pid: 5122, title: 'Tauri 2 — WebView2', process: 'msedgewebview2.exe' },
+  { hwnd: 393356, pid: 6033, title: 'Design sync | Microsoft Teams', process: 'Teams.exe' },
+  { hwnd: 524432, pid: 8255, title: 'File Explorer', process: 'explorer.exe' },
+];
 const D = {
   settings: {
-    wallpaper_dir: '', wallpaper_interval: '0', active_mode: '',
-    // appearance
     pill_size: 'medium', pill_position: 'center', corner_radius: '22',
     bg_color: '#1a1a1a', bg_blur: 'auto', opacity: '95',
     border_on: 'false', border_color: '#6c6c6c',
@@ -73,7 +160,9 @@ const D = {
     blur_on_battery: 'false',
     // modules
     module_media: 'true', module_calendar: 'true', module_tasks: 'true',
-    module_clipboard: 'true',
+    module_clipboard: 'true', module_workspace: 'true',
+    // weather: off until a place is chosen (same as the Rust backend)
+    weather_enabled: 'false', weather_place: '', weather_units: 'c',
     // media
     media_album_art: 'true', media_progress_ring: 'true',
     media_update_speed: '1000',
@@ -87,6 +176,8 @@ const D = {
     hotkey_toggle: 'ctrl+alt+space', hotkey_settings: 'ctrl+alt+comma',
     // advanced
     log_level: 'error',
+    // workspace: local-only defaults (latency probe stays on the LAN)
+    wellbeing_enabled: 'true', net_ping_public: '0', net_ping_host: '1.1.1.1',
   },
   tasks: [
     { id: 1, title: 'Send the design review notes', done: false, due: null, remind_min: 0, day: null, done_at: null, notified: false },
@@ -104,16 +195,40 @@ const D = {
     { id: 3, text: 'Meeting moved to 3:30, same room.', pinned: false, ts: sec() - 90, file_path: null, file_name: null, file_type: null },
     { id: 4, text: 'document.pdf', pinned: false, ts: sec() - 10, file_path: '/tmp/document.pdf', file_name: 'document.pdf', file_type: 'pdf' },
   ],
-  modes: [
-    { id: 1, name: 'Focus', icon: '🎯', actions: [{ type: 'notify', title: 'Focus on', body: 'One thing at a time.' }] },
-    { id: 2, name: 'Break', icon: '☕', actions: [{ type: 'notify', title: 'Break time', body: 'Step away.' }] },
-  ],
-  routines: [
-    { id: 1, name: 'Morning setup', trigger: { kind: 'time', at: '09:00', days: [1, 2, 3, 4, 5] },
-      actions: [{ type: 'wallpaper_next' }, { type: 'open', target: 'https://calendar.google.com' }], enabled: true },
-  ],
 };
 const del = (k, id) => (D[k] = D[k].filter((x) => x.id !== id));
+
+/* Weather mock: no network in the browser. A place lookup produces a stable
+   snapshot derived from the name, so the chip is exercised end to end. */
+const W = { lat: null, lon: null, cache: null };
+function mockWeather() {
+  const units = D.settings.weather_units === 'f' ? 'f' : 'c';
+  if (D.settings.weather_enabled !== 'true' || W.lat === null) {
+    return { ok: false, place: D.settings.weather_place || '', units, error: 'Set a location in Settings' };
+  }
+  if (!W.cache) {
+    // deterministic pseudo-conditions from the coordinates
+    const seed = Math.abs(Math.round(W.lat * 100) + Math.round(W.lon * 100));
+    const code = [0, 1, 2, 3, 61, 80][seed % 6];
+    W.cache = {
+      temp_c: 18 + (seed % 14), feels_c: 19 + (seed % 13),
+      humidity: 40 + (seed % 45), wind_kph: 4 + (seed % 18), code,
+    };
+  }
+  return { ok: true, place: D.settings.weather_place, units, fetched_at: sec(),
+    temp_c: W.cache.temp_c, feels_c: W.cache.feels_c, humidity: W.cache.humidity,
+    wind_kph: W.cache.wind_kph, code: W.cache.code, error: null };
+}
+const setMockPlace = (query) => {
+  const name = String(query || '').trim();
+  if (!name) throw new Error('Type a city or town');
+  D.settings.weather_place = name.replace(/w/g, (c) => c.toUpperCase());
+  D.settings.weather_enabled = 'true';
+  W.lat = 19.07; W.lon = 72.88; W.cache = null;
+  const w = mockWeather();
+  emit('weather://update', w);
+  return w;
+};
 
 function mock(cmd, a) {
   switch (cmd) {
@@ -121,7 +236,13 @@ function mock(cmd, a) {
     case 'media_get': return { ...M, sampled_at_ms: Date.now() };
     case 'media_control':
       if (a.cmd === 'play_pause') { M.position_ms += Date.now() - M.sampled_at_ms; M.playing = !M.playing; }
-      else { M.title = a.cmd === 'next' ? 'Glass Hours' : 'Night Drive'; M.position_ms = 0; M.art = art('#4cc9f0', '#3a0ca3'); }
+      else {
+        const next = a.cmd === 'next';
+        M.title = next ? 'Glass Hours' : 'Night Drive';
+        M.artist = next ? 'Marble Sky' : 'Lowtide';
+        M.position_ms = 0;
+        M.art = next ? art('#4cc9f0', '#3a0ca3') : art('#ff7a59', '#5b2a86');
+      }
       M.sampled_at_ms = Date.now();
       emit('media://update', { ...M });
       return;
@@ -197,29 +318,6 @@ function mock(cmd, a) {
     case 'clip_open_file': console.info('[mock] clip_open_file:', a.path); return;
     case 'clip_delete_file': { const idx = D.clips.findIndex((c) => c.file_path === a.path); if (idx >= 0) D.clips.splice(idx, 1); return; }
     case 'clip_paste_files': console.info('[mock] clip_paste_files'); return 1;
-    case 'mode_list': return D.modes;
-    case 'mode_save':
-      if (a.id) Object.assign(D.modes.find((m) => m.id === a.id), { name: a.name, icon: a.icon, actions: a.actions });
-      else D.modes.push({ id: ++seq, name: a.name, icon: a.icon, actions: a.actions });
-      return;
-    case 'mode_delete': return del('modes', a.id);
-    case 'mode_activate': 
-      const wasActive = D.settings.active_mode === String(a.id);
-      if (wasActive) {
-        D.settings.active_mode = '';
-      } else {
-        D.settings.active_mode = String(a.id);
-      }
-      return;
-    case 'routine_list': return D.routines;
-    case 'routine_save':
-      if (a.id) Object.assign(D.routines.find((r) => r.id === a.id), { name: a.name, trigger: a.trigger, actions: a.actions });
-      else D.routines.push({ id: ++seq, name: a.name, trigger: a.trigger, actions: a.actions, enabled: true });
-      return;
-    case 'routine_toggle': D.routines.find((r) => r.id === a.id).enabled = a.enabled; return;
-    case 'routine_delete': return del('routines', a.id);
-    case 'routine_run': return;
-    case 'wallpaper_next': if (!D.settings.wallpaper_dir) throw 'Set a wallpaper folder first'; return;
     case 'setting_get': return D.settings[a.key] ?? null;
     case 'auto_hide_get': return D.settings.auto_hide ?? false;
     case 'auto_hide_set': D.settings.auto_hide = a.enabled; return;
@@ -245,6 +343,64 @@ function mock(cmd, a) {
       return;
     case 'battery_get': return { charging: false, level: 0.72 };
     case 'open_native': console.info('[mock] open_native:', a.app); return;
+    // -- workspace: network --
+    case 'net_sampler_set': netGate(!!a.enabled); return;
+    case 'net_snapshot': return lastNet;
+    case 'net_settings_get': return {
+      public: D.settings.net_ping_public === '1',
+      host: D.settings.net_ping_host || '1.1.1.1',
+      gateway: '192.168.1.1',
+    };
+    case 'net_settings_set': {
+      if (a.public && !String(a.host || '').trim()) throw new Error('Enter a host to ping');
+      D.settings.net_ping_public = a.public ? '1' : '0';
+      D.settings.net_ping_host = String(a.host || '').trim() || '1.1.1.1';
+      lastNet = null;
+      return;
+    }
+    // -- workspace: digital wellbeing --
+    case 'wellbeing_enabled_get': return D.settings.wellbeing_enabled === 'true';
+    case 'wellbeing_enabled_set':
+      D.settings.wellbeing_enabled = a.enabled ? 'true' : 'false';
+      emit('wellbeing://changed', {});
+      return;
+    case 'wellbeing_today': return D.settings.wellbeing_enabled === 'false' ? [] : wellbeingRows();
+    case 'wellbeing_range': return D.settings.wellbeing_enabled === 'false' ? [] : wellbeingRows();
+    case 'wellbeing_clear': emit('wellbeing://changed', {}); return;
+    // -- workspace: running apps / resources --
+    case 'procs_set': appsGate(!!a.enabled); return;
+    case 'procs_snapshot': return lastApps;
+    // -- weather (opt-in; Open-Meteo on the Rust side) --
+    case 'weather_get': return mockWeather();
+    case 'weather_settings_get': return {
+      enabled: D.settings.weather_enabled === 'true',
+      place: D.settings.weather_place || '',
+      units: D.settings.weather_units === 'f' ? 'f' : 'c',
+      has_location: W.lat !== null,
+    };
+    case 'weather_enabled_set':
+      D.settings.weather_enabled = a.enabled ? 'true' : 'false';
+      if (a.enabled) emit('weather://update', mockWeather());
+      return;
+    case 'weather_units_set':
+      D.settings.weather_units = String(a.units || 'c').startsWith('f') ? 'f' : 'c';
+      emit('weather://update', mockWeather());
+      return;
+    case 'weather_location_set': return setMockPlace(a.query);
+    case 'weather_refresh':
+      W.cache = null;
+      emit('weather://update', mockWeather());
+      return mockWeather();
+    // -- workspace: window macros --
+    case 'topmost_list': return WINDOWS();
+    case 'topmost_float': apps.keep.add(a.hwnd); return;
+    case 'topmost_release': apps.keep.delete(a.hwnd); return;
+    case 'topmost_float_last': return 'Tauri 2 — WebView2';
+    case 'topmost_release_all': {
+      const n = apps.keep.size;
+      apps.keep.clear();
+      return n;
+    }
     case 'enumerate_apps': return [
       { id: null, name: 'Google Chrome', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', icon_filename: null, target: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', group: null, hidden: false },
       { id: null, name: 'Visual Studio Code', path: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', icon_filename: null, target: 'C:\\Program Files\\Microsoft VS Code\\Code.exe', group: null, hidden: false },
@@ -287,6 +443,8 @@ if (typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)) {
     clearProgress: () => { emit('progress://clear', {}); },
     /** isle.simulateCharge(true/false, 0.85) */
     simulateCharge: (charging, level = 0.85) => { emit('battery://update', { charging, level }); },
+    /** isle.weather('Mumbai') — set a mock location (browser only) */
+    weather: (place = 'Mumbai') => setMockPlace(place),
     /** isle.demo() — runs a fake file-copy progress from 0→100 */
     demo: () => {
       let v = 0;
